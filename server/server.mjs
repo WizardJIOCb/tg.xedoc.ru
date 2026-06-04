@@ -69,6 +69,13 @@ const eventDialogueSchema = z.object({
   topic: z.string().trim().min(3).max(120),
   postText: z.string().trim().min(20).max(2500),
   turns: z.coerce.number().int().min(2).max(12),
+  triggerMode: z.enum(["manual", "new_post", "scheduled"]).optional().default("manual"),
+  intensity: z.enum(["calm", "balanced", "active", "heated"]).optional().default("balanced"),
+  dynamics: z.enum(["supportive", "debate", "qa", "painstorm", "mixed"]).optional().default("mixed"),
+  replyTarget: z.enum(["post", "previous", "mixed"]).optional().default("mixed"),
+  mood: z.string().trim().max(160).optional().default("curious, useful"),
+  audiencePain: z.string().trim().max(500).optional().default(""),
+  experimentGoal: z.string().trim().max(320).optional().default(""),
   manualApproval: z.literal(true),
   noAutoPost: z.literal(true),
   ownChannel: z.literal(true),
@@ -316,6 +323,7 @@ async function generateEventDialogue(request, response, user) {
     userId: user.id,
     channel: normalizeChannel(parsed.data.channel),
     topic: parsed.data.topic,
+    activity: discussionActivity(parsed.data),
     turns,
     status: "draft",
     createdAt: new Date().toISOString()
@@ -389,6 +397,7 @@ async function aiCommentDrafts(input) {
 
 async function aiDialogueTurn(input, persona, turns, index) {
   const previous = turns.length ? turns.map((turn) => `${turn.speaker} (${turn.account}): ${turn.reply}`).join("\n") : "No comments yet.";
+  const activity = discussionActivity(input);
   const prompt = [
     "Generate one Telegram discussion comment draft.",
     "Rules: transparent event persona, manual approval only, no autoposting, no fake organic hype, no spam.",
@@ -396,6 +405,14 @@ async function aiDialogueTurn(input, persona, turns, index) {
     input.postUrl ? `Post URL: ${input.postUrl}` : "",
     `Topic: ${input.topic}`,
     `Post: ${input.postText}`,
+    "Experiment controls:",
+    `- Trigger scenario: ${activity.triggerMode}`,
+    `- Discussion intensity: ${activity.intensity}`,
+    `- Dialogue dynamics: ${activity.dynamics}`,
+    `- Reply target: ${activity.replyTarget}`,
+    `- Shared mood: ${activity.mood}`,
+    activity.audiencePain ? `- Audience pains to react to: ${activity.audiencePain}` : "",
+    activity.experimentGoal ? `- Experiment goal: ${activity.experimentGoal}` : "",
     `Current turn: ${index}`,
     `Speaker: ${persona.name} (${persona.handle})`,
     `Role: ${persona.role}`,
@@ -453,6 +470,10 @@ function localCommentDrafts(input) {
 }
 
 function localDialogueTurn(input, persona, turns, index) {
+  const activity = discussionActivity(input);
+  if (activity.dynamics === "painstorm" && index === 1) return `Сразу вижу боль: ${activity.audiencePain || "людям не хватает конкретики, примеров и честной оценки рисков"}. Мне бы хотелось понять, какой самый сложный момент автор уже проверил на практике.`;
+  if (activity.dynamics === "debate" && index > 1) return "Я бы чуть поспорил: идея звучит интересно, но без конкретных метрик легко принять охват за реальный интерес. Какие признаки показывают, что аудитория правда готова действовать?";
+  if (activity.replyTarget === "previous" && turns.length) return "Хорошее уточнение выше. Я бы добавил ещё один угол: важно сравнить не только реакцию на пост, но и качество вопросов в обсуждении, потому что там обычно видна настоящая потребность.";
   if (index === 1) return `Мне нравится, что тема вынесена в обсуждение, а не просто в анонс. По ${input.topic.toLowerCase()} важнее всего увидеть реальные вопросы аудитории под постом.`;
   const previous = turns.at(-1)?.reply ?? "";
   if (/вопрос|как|почему/i.test(previous)) return "Я бы проверил это на маленьком ручном тесте: 2-3 комментария, явная маркировка роли и обязательное согласование перед публикацией.";
@@ -593,6 +614,18 @@ function normalizeChannel(value) {
 
 function nextId(rows) {
   return rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1;
+}
+
+function discussionActivity(input) {
+  return {
+    triggerMode: input.triggerMode ?? "manual",
+    intensity: input.intensity ?? "balanced",
+    dynamics: input.dynamics ?? "mixed",
+    replyTarget: input.replyTarget ?? "mixed",
+    mood: input.mood || "curious, useful",
+    audiencePain: input.audiencePain || "",
+    experimentGoal: input.experimentGoal || ""
+  };
 }
 
 function normalizeEventPersonas(rows) {

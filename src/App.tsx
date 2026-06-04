@@ -116,6 +116,13 @@ type EventDialogueFormState = {
   topic: string;
   postText: string;
   turns: string;
+  triggerMode: "manual" | "new_post" | "scheduled";
+  intensity: "calm" | "balanced" | "active" | "heated";
+  dynamics: "supportive" | "debate" | "qa" | "painstorm" | "mixed";
+  replyTarget: "post" | "previous" | "mixed";
+  mood: string;
+  audiencePain: string;
+  experimentGoal: string;
   manualApproval: boolean;
   noAutoPost: boolean;
   ownChannel: boolean;
@@ -152,6 +159,13 @@ const defaultDialogueForm: EventDialogueFormState = {
   postText:
     "Пост канала о запуске AI SaaS: автор показывает первые продажи, просит аудиторию поделиться опытом запуска через Telegram-каналы и обсуждения под постами.",
   turns: "6",
+  triggerMode: "manual",
+  intensity: "balanced",
+  dynamics: "mixed",
+  replyTarget: "mixed",
+  mood: "curious, useful, slightly playful",
+  audiencePain: "people want practical launch examples, risks, metrics, and honest objections",
+  experimentGoal: "see how different personas discuss the post without sales pressure",
   manualApproval: true,
   noAutoPost: true,
   ownChannel: true
@@ -576,6 +590,10 @@ function App() {
 
   useEffect(() => {
     setGatewayConfig((previous) => previous.token ? { ...previous, token: "" } : previous);
+  }, []);
+
+  useEffect(() => {
+    setDialogueForm((previous) => ({ ...defaultDialogueForm, ...previous }));
   }, []);
 
   const showToast = (message: string) => {
@@ -1838,6 +1856,55 @@ function CommentsView({
               onChange={(event) => setDialogueForm({ ...dialogueForm, postText: event.target.value })}
             />
           </Field>
+          <div className="activity-lab">
+            <div className="form-grid four">
+              <Field label="Триггер" error={errors.triggerMode}>
+                <select value={dialogueForm.triggerMode} onChange={(event) => setDialogueForm({ ...dialogueForm, triggerMode: event.target.value as EventDialogueFormState["triggerMode"] })}>
+                  <option value="manual">Ручной запуск</option>
+                  <option value="new_post">Новый пост</option>
+                  <option value="scheduled">По расписанию</option>
+                </select>
+              </Field>
+              <Field label="Интенсивность" error={errors.intensity}>
+                <select value={dialogueForm.intensity} onChange={(event) => setDialogueForm({ ...dialogueForm, intensity: event.target.value as EventDialogueFormState["intensity"] })}>
+                  <option value="calm">Спокойно</option>
+                  <option value="balanced">Баланс</option>
+                  <option value="active">Активно</option>
+                  <option value="heated">Жарко</option>
+                </select>
+              </Field>
+              <Field label="Динамика" error={errors.dynamics}>
+                <select value={dialogueForm.dynamics} onChange={(event) => setDialogueForm({ ...dialogueForm, dynamics: event.target.value as EventDialogueFormState["dynamics"] })}>
+                  <option value="mixed">Смешанная</option>
+                  <option value="supportive">Поддержка</option>
+                  <option value="debate">Спор</option>
+                  <option value="qa">Вопросы</option>
+                  <option value="painstorm">Боли</option>
+                </select>
+              </Field>
+              <Field label="Ответы" error={errors.replyTarget}>
+                <select value={dialogueForm.replyTarget} onChange={(event) => setDialogueForm({ ...dialogueForm, replyTarget: event.target.value as EventDialogueFormState["replyTarget"] })}>
+                  <option value="mixed">Пост + ветка</option>
+                  <option value="post">Только к посту</option>
+                  <option value="previous">На предыдущих</option>
+                </select>
+              </Field>
+            </div>
+            <div className="form-grid two">
+              <Field label="Настроение" error={errors.mood}>
+                <input value={dialogueForm.mood} onChange={(event) => setDialogueForm({ ...dialogueForm, mood: event.target.value })} />
+              </Field>
+              <Field label="Цель эксперимента" error={errors.experimentGoal}>
+                <input value={dialogueForm.experimentGoal} onChange={(event) => setDialogueForm({ ...dialogueForm, experimentGoal: event.target.value })} />
+              </Field>
+            </div>
+            <Field label="Боли и мнения аудитории" error={errors.audiencePain}>
+              <textarea
+                value={dialogueForm.audiencePain}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, audiencePain: event.target.value })}
+              />
+            </Field>
+          </div>
           <div className="form-grid two">
             <Field label="Реплик" error={errors.turns}>
               <input

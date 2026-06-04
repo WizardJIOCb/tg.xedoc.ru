@@ -99,6 +99,13 @@ export const eventDialogueSchema = z.object({
   topic: z.string().trim().min(3, "Укажите тему").max(120, "Тема слишком длинная"),
   postText: z.string().trim().min(20, "Добавьте текст поста").max(2500, "Пост слишком длинный"),
   turns: z.coerce.number().int().min(2, "Минимум 2 реплики").max(12, "Максимум 12 реплик"),
+  triggerMode: z.enum(["manual", "new_post", "scheduled"]).optional().default("manual"),
+  intensity: z.enum(["calm", "balanced", "active", "heated"]).optional().default("balanced"),
+  dynamics: z.enum(["supportive", "debate", "qa", "painstorm", "mixed"]).optional().default("mixed"),
+  replyTarget: z.enum(["post", "previous", "mixed"]).optional().default("mixed"),
+  mood: z.string().trim().max(160, "Mood is too long").optional().default("curious, useful"),
+  audiencePain: z.string().trim().max(500, "Audience pain is too long").optional().default(""),
+  experimentGoal: z.string().trim().max(320, "Experiment goal is too long").optional().default(""),
   manualApproval: z.boolean().refine(Boolean, "Нужно ручное подтверждение"),
   noAutoPost: z.boolean().refine(Boolean, "Автопостинг отключен"),
   ownChannel: z.boolean().refine(Boolean, "Используйте только свой канал/согласованный event")
