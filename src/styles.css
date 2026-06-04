@@ -588,6 +588,15 @@ a {
   color: #0f766e;
 }
 
+.telegram-send-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  background: #f7fbfd;
+  border: 1px solid #dfe7ef;
+  border-radius: 8px;
+}
+
 .comment-draft p {
   white-space: pre-wrap;
 }
@@ -1087,6 +1096,17 @@ select:focus {
 .message-row p {
   margin: 3px 0 0;
   line-height: 1.45;
+}
+
+.message-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.message-actions .mini-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .bars {

@@ -430,6 +430,11 @@ function App() {
   const [loginForm, setLoginForm] = useState({ username: "rodion", password: "" });
   const [loginError, setLoginError] = useState("");
   const [serverInfo, setServerInfo] = useState({ xedocConfigured: false, telegramPostingConfigured: false });
+  const [telegramForm, setTelegramForm] = useState({
+    discussionChatId: "",
+    replyToMessageId: "",
+    confirmedOwnChannel: true
+  });
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [userForm, setUserForm] = useState({ username: "", password: "", role: "user" });
   const [savedComments, setSavedComments] = useState<SavedComment[]>([]);
@@ -711,6 +716,27 @@ function App() {
   const copyCommentDraft = async (draft: string) => {
     await navigator.clipboard.writeText(draft);
     showToast("Черновик скопирован");
+  };
+
+  const sendTelegramComment = async (draft: string) => {
+    if (!serverInfo.telegramPostingConfigured) {
+      showToast("Telegram Bot API не настроен на сервере");
+      return;
+    }
+    if (!telegramForm.discussionChatId.trim() || !telegramForm.confirmedOwnChannel) {
+      showToast("Укажите discussion chat и подтвердите канал");
+      return;
+    }
+    await apiRequest("/api/telegram/send-comment", {
+      method: "POST",
+      body: JSON.stringify({
+        text: draft,
+        discussionChatId: telegramForm.discussionChatId.trim(),
+        replyToMessageId: telegramForm.replyToMessageId.trim() ? Number(telegramForm.replyToMessageId) : undefined,
+        confirmedOwnChannel: telegramForm.confirmedOwnChannel
+      })
+    });
+    showToast("Комментарий отправлен ботом");
   };
 
   const generateAiComments = async () => {
@@ -999,7 +1025,10 @@ function App() {
             setPostText={setCommentPostText}
             draftResult={visibleCommentDraftResult}
             copyDraft={copyCommentDraft}
+            sendTelegramComment={sendTelegramComment}
             generateAiComments={generateAiComments}
+            telegramForm={telegramForm}
+            setTelegramForm={setTelegramForm}
             gatewayConfig={gatewayConfig}
             setGatewayConfig={setGatewayConfig}
             eventPersonas={eventPersonas}
@@ -1508,7 +1537,10 @@ function CommentsView({
   setPostText,
   draftResult,
   copyDraft,
+  sendTelegramComment,
   generateAiComments,
+  telegramForm,
+  setTelegramForm,
   gatewayConfig,
   setGatewayConfig,
   eventPersonas,
@@ -1555,7 +1587,10 @@ function CommentsView({
   setPostText: (value: string) => void;
   draftResult: DraftResult;
   copyDraft: (draft: string) => void;
+  sendTelegramComment: (draft: string) => void;
   generateAiComments: () => void;
+  telegramForm: { discussionChatId: string; replyToMessageId: string; confirmedOwnChannel: boolean };
+  setTelegramForm: (value: { discussionChatId: string; replyToMessageId: string; confirmedOwnChannel: boolean }) => void;
   gatewayConfig: XedocGatewayConfig;
   setGatewayConfig: (value: XedocGatewayConfig) => void;
   eventPersonas: EventPersona[];
@@ -1612,14 +1647,53 @@ function CommentsView({
                 {serverInfo.xedocConfigured ? "AI gateway online" : "AI gateway off"}
               </span>
             </div>
+            <div className="telegram-send-panel">
+              <div className="form-grid two">
+                <Field label="Discussion chat ID">
+                  <input
+                    value={telegramForm.discussionChatId}
+                    onChange={(event) => setTelegramForm({ ...telegramForm, discussionChatId: event.target.value })}
+                    placeholder="-100..."
+                  />
+                </Field>
+                <Field label="Reply message ID">
+                  <input
+                    type="number"
+                    min="1"
+                    value={telegramForm.replyToMessageId}
+                    onChange={(event) => setTelegramForm({ ...telegramForm, replyToMessageId: event.target.value })}
+                    placeholder="optional"
+                  />
+                </Field>
+              </div>
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={telegramForm.confirmedOwnChannel}
+                  onChange={(event) => setTelegramForm({ ...telegramForm, confirmedOwnChannel: event.target.checked })}
+                />
+                <span>Канал свой или согласован для event-комментариев</span>
+              </label>
+            </div>
             <div className="message-stack">
               {draftResult.drafts.map((draft, index) => (
                 <div className="message-row comment-draft" key={draft}>
                   <span>{index + 1}</span>
                   <p>{draft}</p>
+                  <div className="message-actions">
                   <button type="button" className="mini-button" title="Копировать" onClick={() => copyDraft(draft)}>
                     <Copy size={15} />
                   </button>
+                    <button
+                      type="button"
+                      className="mini-button"
+                      title="Отправить ботом"
+                      onClick={() => sendTelegramComment(draft)}
+                      disabled={!serverInfo.telegramPostingConfigured || !telegramForm.discussionChatId.trim() || !telegramForm.confirmedOwnChannel}
+                    >
+                      <Send size={15} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
