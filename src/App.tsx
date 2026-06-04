@@ -2,6 +2,7 @@ import {
   Activity,
   BadgeCheck,
   BellRing,
+  Bot,
   ChartNoAxesCombined,
   Check,
   ChevronRight,
@@ -27,6 +28,8 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  Send,
+  Trash2,
   UsersRound,
   WandSparkles,
   X
@@ -38,15 +41,20 @@ import {
   type CampaignStatus,
   type Channel,
   type ChannelRisk,
+  type EventDialogueTurn,
+  type EventPersona,
   type Lead,
   type LeadStage,
+  type ModelProvider,
   type NavKey,
+  type XedocGatewayConfig,
   keywordWeights,
   reportRows,
   safetyMap,
   seedCampaigns,
   seedChannels,
   seedCommentRules,
+  seedEventPersonas,
   seedLeads,
   seedTasks
 } from "./data";
@@ -54,9 +62,12 @@ import {
   aiCommentRuleSchema,
   campaignSchema,
   commentPostSchema,
+  eventDialogueSchema,
+  eventPersonaSchema,
   keywordSchema,
   leadSchema,
-  publicTelegramSourceSchema
+  publicTelegramSourceSchema,
+  xedocGatewayConfigSchema
 } from "./schemas";
 
 const navItems: Array<{ key: NavKey; label: string; icon: ComponentType<{ size?: number }> }> = [
@@ -88,6 +99,77 @@ const riskLabels: Record<ChannelRisk, string> = {
   low: "низкий",
   medium: "средний",
   high: "высокий"
+};
+
+type EventPersonaFormState = {
+  name: string;
+  handle: string;
+  role: string;
+  kind: ModelProvider;
+};
+
+type EventDialogueFormState = {
+  channel: string;
+  postUrl: string;
+  topic: string;
+  postText: string;
+  turns: string;
+  manualApproval: boolean;
+  noAutoPost: boolean;
+  ownChannel: boolean;
+};
+
+type GatewayStatus = {
+  state: "idle" | "loading" | "success" | "error";
+  message: string;
+};
+
+const defaultGatewayConfig: XedocGatewayConfig = {
+  baseUrl: "https://xedoc.ru",
+  token: "",
+  agentId: "",
+  repoId: "",
+  kind: "codex",
+  model: "",
+  waitMs: 45000
+};
+
+const defaultPersonaForm: EventPersonaFormState = {
+  name: "Event Guest",
+  handle: "@event_guest",
+  role: "Участник события: пишет коротко, по делу, задает один уточняющий вопрос.",
+  kind: "codex"
+};
+
+const defaultDialogueForm: EventDialogueFormState = {
+  channel: "@aiproductlab",
+  postUrl: "",
+  topic: "Запуск продукта на Telegram-аудиторию",
+  postText:
+    "Пост канала о запуске AI SaaS: автор показывает первые продажи, просит аудиторию поделиться опытом запуска через Telegram-каналы и обсуждения под постами.",
+  turns: "6",
+  manualApproval: true,
+  noAutoPost: true,
+  ownChannel: true
+};
+
+const providerLabels: Record<ModelProvider, string> = {
+  codex: "Codex",
+  grok: "Grok",
+  "gemini-cli": "Gemini CLI",
+  gemini: "Gemini"
+};
+
+type GatewayChatResponse = {
+  chatId: string;
+  error?: string;
+};
+
+type GatewayRunResponse = {
+  jobId: string;
+  finalMessage?: string | null;
+  job?: { status?: string; finalMessage?: string | null };
+  error?: string;
 };
 
 function usePersistentState<T>(key: string, initialValue: T) {
@@ -216,6 +298,83 @@ function generateCommentDrafts(rule: AiCommentRule | undefined, postText: string
   return drafts.map((draft) => `${draft}\n\nКонтроль: ${baseContext}; без автопостинга.`);
 }
 
+function gatewayUrl(config: XedocGatewayConfig, path: string) {
+  return `${config.baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+async function gatewayRequest<T>(config: XedocGatewayConfig, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(gatewayUrl(config, path), {
+    method: body ? "POST" : "GET",
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      "Content-Type": "application/json"
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = typeof payload.error === "string" ? payload.error : `HTTP ${response.status}`;
+    throw new Error(error);
+  }
+  return payload as T;
+}
+
+function modelBody(config: XedocGatewayConfig, kind: ModelProvider) {
+  return {
+    agentId: config.agentId.trim() || undefined,
+    repoId: config.repoId.trim() || undefined,
+    kind,
+    model: kind === config.kind && config.model.trim() ? config.model.trim() : undefined,
+    waitMs: config.waitMs
+  };
+}
+
+function cleanModelReply(value: string | null | undefined) {
+  return (value ?? "")
+    .replace(/^```(?:json|text)?/i, "")
+    .replace(/```$/i, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+function buildTurnPrompt(
+  input: EventDialogueFormState,
+  personas: EventPersona[],
+  persona: EventPersona,
+  transcript: EventDialogueTurn[],
+  index: number
+) {
+  const previous = transcript.length
+    ? transcript.map((turn) => `${turn.speaker} (${turn.account}): ${turn.reply}`).join("\n")
+    : "Пока реплик нет.";
+
+  return [
+    "Сгенерируй одну реплику-комментарий для Telegram-обсуждения под постом.",
+    "",
+    "Правила безопасности:",
+    "- Это черновик для ручного согласования, не автопостинг.",
+    "- Не изображай независимого случайного пользователя и не создавай ощущение накрутки.",
+    "- Аккаунты ниже являются согласованными event-персонами/ролями для собственного или согласованного канала.",
+    "- Не пиши агрессивную рекламу, спам, призывы купить, обманные утверждения.",
+    "- Верни только текст комментария без JSON, Markdown и пояснений.",
+    "",
+    `Канал: ${normalizeChannel(input.channel)}`,
+    input.postUrl.trim() ? `Пост: ${input.postUrl.trim()}` : "",
+    `Тема события: ${input.topic.trim()}`,
+    `Текст поста: ${input.postText.trim()}`,
+    "",
+    "Event-персоны:",
+    personas.map((item) => `- ${item.name} (${item.handle}, ${providerLabels[item.kind]}): ${item.role}`).join("\n"),
+    "",
+    `Сейчас ход ${index}. Автор реплики: ${persona.name} (${persona.handle}). Роль: ${persona.role}`,
+    "",
+    "Предыдущий диалог:",
+    previous,
+    "",
+    "Нужна естественная реплика на русском: 1-3 предложения, до 450 символов, с привязкой к посту или предыдущей реплике."
+  ].filter(Boolean).join("\n");
+}
+
 function App() {
   const [active, setActive] = useState<NavKey>("dashboard");
   const [channels, setChannels] = usePersistentState<Channel[]>("tg-hunter.channels", seedChannels);
@@ -224,6 +383,18 @@ function App() {
   const [commentRules, setCommentRules] = usePersistentState<AiCommentRule[]>(
     "tg-hunter.commentRules",
     seedCommentRules
+  );
+  const [gatewayConfig, setGatewayConfig] = usePersistentState<XedocGatewayConfig>(
+    "tg-hunter.xedocGateway",
+    defaultGatewayConfig
+  );
+  const [eventPersonas, setEventPersonas] = usePersistentState<EventPersona[]>(
+    "tg-hunter.eventPersonas",
+    seedEventPersonas
+  );
+  const [eventDialogue, setEventDialogue] = usePersistentState<EventDialogueTurn[]>(
+    "tg-hunter.eventDialogue",
+    []
   );
   const [sourceForm, setSourceForm] = useState({ source: "@", topic: "", note: "" });
   const [leadForm, setLeadForm] = useState({ name: "", source: "", value: "900", consent: true, notes: "" });
@@ -244,6 +415,12 @@ function App() {
     signature: "TG Hunter",
     stopWords: "купите, срочно, гарантия, накрутка"
   });
+  const [personaForm, setPersonaForm] = useState<EventPersonaFormState>(defaultPersonaForm);
+  const [dialogueForm, setDialogueForm] = usePersistentState<EventDialogueFormState>(
+    "tg-hunter.dialogueForm",
+    defaultDialogueForm
+  );
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>({ state: "idle", message: "" });
   const [selectedRuleId, setSelectedRuleId] = useState(seedCommentRules[0]?.id ?? 0);
   const [commentPostText, setCommentPostText] = useState(
     "Пост про запуск AI SaaS: автор показывает рост выручки, Telegram-канал как комьюнити и первые продажи через публичные обсуждения."
@@ -430,6 +607,132 @@ function App() {
     showToast("Черновик скопирован");
   };
 
+  const addPersona = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsed = eventPersonaSchema.safeParse(personaForm);
+    if (!parsed.success) {
+      setErrors(getFieldErrors(parsed.error));
+      return;
+    }
+
+    const nextPersona: EventPersona = {
+      id: Date.now(),
+      name: parsed.data.name,
+      handle: parsed.data.handle,
+      role: parsed.data.role,
+      kind: parsed.data.kind
+    };
+    setEventPersonas((previous) => [...previous, nextPersona]);
+    setPersonaForm(defaultPersonaForm);
+    setErrors({});
+    showToast("Event-аккаунт добавлен");
+  };
+
+  const removePersona = (personaId: number) => {
+    setEventPersonas((previous) => previous.filter((persona) => persona.id !== personaId));
+    showToast("Event-аккаунт удален");
+  };
+
+  const generateEventDialogue = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsedGateway = xedocGatewayConfigSchema.safeParse(gatewayConfig);
+    if (!parsedGateway.success) {
+      setErrors(getFieldErrors(parsedGateway.error));
+      setGatewayStatus({ state: "error", message: "Проверьте настройки xedoc.ru gateway" });
+      return;
+    }
+
+    const parsedDialogue = eventDialogueSchema.safeParse(dialogueForm);
+    if (!parsedDialogue.success) {
+      setErrors(getFieldErrors(parsedDialogue.error));
+      setGatewayStatus({ state: "error", message: "Проверьте настройки диалога события" });
+      return;
+    }
+
+    if (eventPersonas.length < 2) {
+      setGatewayStatus({ state: "error", message: "Для диалога нужны минимум два event-аккаунта" });
+      return;
+    }
+
+    const gateway: XedocGatewayConfig = {
+      ...gatewayConfig,
+      ...parsedGateway.data,
+      agentId: parsedGateway.data.agentId ?? "",
+      repoId: parsedGateway.data.repoId ?? "",
+      model: parsedGateway.data.model ?? ""
+    };
+    const dialogueInput: EventDialogueFormState = {
+      ...parsedDialogue.data,
+      postUrl: parsedDialogue.data.postUrl ?? "",
+      turns: String(parsedDialogue.data.turns)
+    };
+    const personas = eventPersonas.slice(0, 8);
+    const title = `TG event ${normalizeChannel(parsedDialogue.data.channel)}: ${parsedDialogue.data.topic}`.slice(0, 160);
+
+    setErrors({});
+    setEventDialogue([]);
+    setGatewayStatus({ state: "loading", message: "Создаю чат на xedoc.ru" });
+
+    try {
+      const chat = await gatewayRequest<GatewayChatResponse>(gateway, "/api/external/model/chats", {
+        agentId: gateway.agentId.trim() || undefined,
+        repoId: gateway.repoId.trim() || undefined,
+        title,
+        source: "tg-hunter",
+        externalId: `tg-hunter:${Date.now()}`,
+        systemPrompt:
+          "TG Hunter event dialogue workspace. Generate transparent event-comment drafts for manual approval only. Do not automate Telegram posting."
+      });
+
+      let transcript: EventDialogueTurn[] = [];
+      for (let index = 1; index <= parsedDialogue.data.turns; index += 1) {
+        const persona = personas[(index - 1) % personas.length];
+        if (!persona) break;
+        setGatewayStatus({
+          state: "loading",
+          message: `${index}/${parsedDialogue.data.turns}: ${persona.name} через ${providerLabels[persona.kind]}`
+        });
+        const run = await gatewayRequest<GatewayRunResponse>(
+          gateway,
+          `/api/external/model/chats/${encodeURIComponent(chat.chatId)}/messages`,
+          {
+            ...modelBody(gateway, persona.kind),
+            prompt: buildTurnPrompt(dialogueInput, personas, persona, transcript, index),
+            displayPrompt: `Реплика ${index}: ${persona.name} (${persona.handle})`
+          }
+        );
+        const reply = cleanModelReply(run.finalMessage ?? run.job?.finalMessage);
+        if (!reply) throw new Error(`Пустой ответ модели на реплике ${index}`);
+        transcript = [
+          ...transcript,
+          {
+            id: Date.now() + index,
+            speaker: persona.name,
+            account: persona.handle,
+            reply
+          }
+        ];
+        setEventDialogue(transcript);
+      }
+
+      setGatewayStatus({ state: "success", message: `Диалог создан: ${transcript.length} реплик, chat ${chat.chatId}` });
+      showToast("Диалог события создан");
+    } catch (error) {
+      setGatewayStatus({
+        state: "error",
+        message: `xedoc.ru: ${error instanceof Error ? error.message : "не удалось создать диалог"}`
+      });
+    }
+  };
+
+  const copyEventDialogue = async () => {
+    if (!eventDialogue.length) return;
+    await navigator.clipboard.writeText(
+      eventDialogue.map((turn) => `${turn.speaker} (${turn.account}): ${turn.reply}`).join("\n\n")
+    );
+    showToast("Диалог скопирован");
+  };
+
   const exportPlan = () => {
     const payload = {
       product: "TG Hunter",
@@ -439,7 +742,13 @@ function App() {
       channels,
       leads,
       campaigns,
-      commentRules
+      commentRules,
+      eventPersonas,
+      eventDialogue,
+      xedocGateway: {
+        ...gatewayConfig,
+        token: gatewayConfig.token ? "configured" : ""
+      }
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -562,6 +871,19 @@ function App() {
             setPostText={setCommentPostText}
             draftResult={commentDraftResult}
             copyDraft={copyCommentDraft}
+            gatewayConfig={gatewayConfig}
+            setGatewayConfig={setGatewayConfig}
+            eventPersonas={eventPersonas}
+            personaForm={personaForm}
+            setPersonaForm={setPersonaForm}
+            addPersona={addPersona}
+            removePersona={removePersona}
+            dialogueForm={dialogueForm}
+            setDialogueForm={setDialogueForm}
+            generateEventDialogue={generateEventDialogue}
+            eventDialogue={eventDialogue}
+            gatewayStatus={gatewayStatus}
+            copyEventDialogue={copyEventDialogue}
           />
         )}
 
@@ -999,7 +1321,20 @@ function CommentsView({
   postText,
   setPostText,
   draftResult,
-  copyDraft
+  copyDraft,
+  gatewayConfig,
+  setGatewayConfig,
+  eventPersonas,
+  personaForm,
+  setPersonaForm,
+  addPersona,
+  removePersona,
+  dialogueForm,
+  setDialogueForm,
+  generateEventDialogue,
+  eventDialogue,
+  gatewayStatus,
+  copyEventDialogue
 }: {
   rules: AiCommentRule[];
   selectedRuleId: number;
@@ -1032,6 +1367,19 @@ function CommentsView({
   setPostText: (value: string) => void;
   draftResult: { drafts: string[]; error: string };
   copyDraft: (draft: string) => void;
+  gatewayConfig: XedocGatewayConfig;
+  setGatewayConfig: (value: XedocGatewayConfig) => void;
+  eventPersonas: EventPersona[];
+  personaForm: EventPersonaFormState;
+  setPersonaForm: (value: EventPersonaFormState) => void;
+  addPersona: (event: FormEvent<HTMLFormElement>) => void;
+  removePersona: (id: number) => void;
+  dialogueForm: EventDialogueFormState;
+  setDialogueForm: (value: EventDialogueFormState) => void;
+  generateEventDialogue: (event: FormEvent<HTMLFormElement>) => void;
+  eventDialogue: EventDialogueTurn[];
+  gatewayStatus: GatewayStatus;
+  copyEventDialogue: () => void;
 }) {
   const selectedRule = rules.find((rule) => rule.id === selectedRuleId) ?? rules[0];
 
@@ -1156,6 +1504,233 @@ function CommentsView({
             Добавить правило
           </button>
         </form>
+      </section>
+
+      <section className="section wide">
+        <SectionHeader icon={Bot} title="Диалог события под постом" />
+        <form className="form event-dialogue-form" onSubmit={generateEventDialogue}>
+          <div className="comment-policy">
+            <ShieldCheck size={18} />
+            <span>Event-аккаунты здесь являются согласованными ролями для собственного или согласованного канала. Система готовит черновики, публикация остается ручной.</span>
+          </div>
+          <div className="form-grid two">
+            <Field label="Канал" error={errors.channel}>
+              <input
+                value={dialogueForm.channel}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, channel: event.target.value })}
+                placeholder="@channel"
+              />
+            </Field>
+            <Field label="Ссылка на пост" error={errors.postUrl}>
+              <input
+                value={dialogueForm.postUrl}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, postUrl: event.target.value })}
+                placeholder="https://t.me/channel/123"
+              />
+            </Field>
+          </div>
+          <Field label="Тема диалога" error={errors.topic}>
+            <input
+              value={dialogueForm.topic}
+              onChange={(event) => setDialogueForm({ ...dialogueForm, topic: event.target.value })}
+            />
+          </Field>
+          <Field label="Текст поста" error={errors.postText}>
+            <textarea
+              className="event-post-input"
+              value={dialogueForm.postText}
+              onChange={(event) => setDialogueForm({ ...dialogueForm, postText: event.target.value })}
+            />
+          </Field>
+          <div className="form-grid two">
+            <Field label="Реплик" error={errors.turns}>
+              <input
+                type="number"
+                min="2"
+                max="12"
+                value={dialogueForm.turns}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, turns: event.target.value })}
+              />
+            </Field>
+            <div className="status-panel">
+              <span className={`status-pill ${gatewayStatus.state}`}>{gatewayStatus.state === "loading" ? "В работе" : gatewayStatus.state === "success" ? "Готово" : gatewayStatus.state === "error" ? "Ошибка" : "Ожидает"}</span>
+              <small>{gatewayStatus.message || "Настройте gateway и запустите генерацию"}</small>
+            </div>
+          </div>
+          <div className="checklist compact">
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={dialogueForm.manualApproval}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, manualApproval: event.target.checked })}
+              />
+              <span>Ручное подтверждение каждой реплики</span>
+            </label>
+            {errors.manualApproval && <span className="error-text">{errors.manualApproval}</span>}
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={dialogueForm.noAutoPost}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, noAutoPost: event.target.checked })}
+              />
+              <span>Автопостинг отключен</span>
+            </label>
+            {errors.noAutoPost && <span className="error-text">{errors.noAutoPost}</span>}
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={dialogueForm.ownChannel}
+                onChange={(event) => setDialogueForm({ ...dialogueForm, ownChannel: event.target.checked })}
+              />
+              <span>Канал свой или согласован для event</span>
+            </label>
+            {errors.ownChannel && <span className="error-text">{errors.ownChannel}</span>}
+          </div>
+          <div className="command-actions">
+            <button type="submit" className="button" disabled={gatewayStatus.state === "loading"}>
+              <Send size={17} />
+              Создать диалог через xedoc.ru
+            </button>
+            <button type="button" className="button secondary" onClick={copyEventDialogue} disabled={!eventDialogue.length}>
+              <Copy size={17} />
+              Скопировать диалог
+            </button>
+          </div>
+        </form>
+
+        {eventDialogue.length > 0 && (
+          <div className="dialogue-output">
+            {eventDialogue.map((turn, index) => (
+              <div className="message-row dialogue-turn" key={turn.id}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{turn.speaker} <small>{turn.account}</small></strong>
+                  <p>{turn.reply}</p>
+                </div>
+                <button type="button" className="mini-button" title="Копировать" onClick={() => copyDraft(turn.reply)}>
+                  <Copy size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="section">
+        <SectionHeader icon={Bot} title="xedoc.ru models" />
+        <div className="form gateway-form">
+          <Field label="API base" error={errors.baseUrl}>
+            <input
+              value={gatewayConfig.baseUrl}
+              onChange={(event) => setGatewayConfig({ ...gatewayConfig, baseUrl: event.target.value })}
+            />
+          </Field>
+          <Field label="Bearer token" error={errors.token}>
+            <input
+              type="password"
+              value={gatewayConfig.token}
+              onChange={(event) => setGatewayConfig({ ...gatewayConfig, token: event.target.value })}
+              placeholder="MODEL_API_TOKEN"
+            />
+          </Field>
+          <div className="form-grid two">
+            <Field label="Agent ID" error={errors.agentId}>
+              <input
+                value={gatewayConfig.agentId}
+                onChange={(event) => setGatewayConfig({ ...gatewayConfig, agentId: event.target.value })}
+                placeholder="env default"
+              />
+            </Field>
+            <Field label="Repo ID" error={errors.repoId}>
+              <input
+                value={gatewayConfig.repoId}
+                onChange={(event) => setGatewayConfig({ ...gatewayConfig, repoId: event.target.value })}
+                placeholder="env default"
+              />
+            </Field>
+          </div>
+          <div className="form-grid two">
+            <Field label="Модель по умолчанию" error={errors.kind}>
+              <select
+                value={gatewayConfig.kind}
+                onChange={(event) => setGatewayConfig({ ...gatewayConfig, kind: event.target.value as ModelProvider })}
+              >
+                {Object.entries(providerLabels).map(([value, label]) => (
+                  <option value={value} key={value}>{label}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Model override" error={errors.model}>
+              <input
+                value={gatewayConfig.model}
+                onChange={(event) => setGatewayConfig({ ...gatewayConfig, model: event.target.value })}
+                placeholder="optional"
+              />
+            </Field>
+          </div>
+          <Field label="Ожидание ответа, мс" error={errors.waitMs}>
+            <input
+              type="number"
+              min="0"
+              max="120000"
+              step="5000"
+              value={gatewayConfig.waitMs}
+              onChange={(event) => setGatewayConfig({ ...gatewayConfig, waitMs: Number(event.target.value) })}
+            />
+          </Field>
+        </div>
+
+        <div className="persona-panel">
+          <div className="section-header compact-header">
+            <div>
+              <UsersRound size={18} />
+              <h2>Event-аккаунты</h2>
+            </div>
+          </div>
+          <div className="persona-list">
+            {eventPersonas.map((persona) => (
+              <div className="persona-card" key={persona.id}>
+                <div>
+                  <strong>{persona.name}</strong>
+                  <small>{persona.handle} · {providerLabels[persona.kind]}</small>
+                  <p>{persona.role}</p>
+                </div>
+                <button type="button" className="mini-button" title="Удалить" onClick={() => removePersona(persona.id)}>
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <form className="form persona-form" onSubmit={addPersona}>
+            <Field label="Имя" error={errors.name}>
+              <input
+                value={personaForm.name}
+                onChange={(event) => setPersonaForm({ ...personaForm, name: event.target.value })}
+              />
+            </Field>
+            <Field label="Метка аккаунта" error={errors.handle}>
+              <input
+                value={personaForm.handle}
+                onChange={(event) => setPersonaForm({ ...personaForm, handle: event.target.value })}
+                placeholder="@event_guest"
+              />
+            </Field>
+            <Field label="Provider" error={errors.kind}>
+              <select value={personaForm.kind} onChange={(event) => setPersonaForm({ ...personaForm, kind: event.target.value as ModelProvider })}>
+                {Object.entries(providerLabels).map(([value, label]) => (
+                  <option value={value} key={value}>{label}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Роль" error={errors.role}>
+              <textarea value={personaForm.role} onChange={(event) => setPersonaForm({ ...personaForm, role: event.target.value })} />
+            </Field>
+            <button type="submit" className="button secondary">
+              <Plus size={17} />
+              Добавить event-аккаунт
+            </button>
+          </form>
+        </div>
       </section>
     </div>
   );

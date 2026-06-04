@@ -59,7 +59,53 @@ export const commentPostSchema = z.object({
   text: z.string().trim().min(20, "Добавьте текст поста").max(1200, "Пост слишком длинный")
 });
 
+export const modelProviderSchema = z.enum(["codex", "grok", "gemini-cli", "gemini"]);
+
+export const xedocGatewayConfigSchema = z.object({
+  baseUrl: z.string().trim().url("Нужен URL xedoc.ru API").max(160, "URL слишком длинный"),
+  token: z.string().trim().min(12, "Укажите bearer-token gateway").max(300, "Токен слишком длинный"),
+  agentId: z.string().trim().max(80, "agentId слишком длинный").optional(),
+  repoId: z.string().trim().max(80, "repoId слишком длинный").optional(),
+  kind: modelProviderSchema,
+  model: z.string().trim().max(80, "Модель слишком длинная").optional(),
+  waitMs: z.coerce.number().int().min(0, "Минимум 0").max(120000, "Максимум 120 секунд")
+});
+
+export const eventPersonaSchema = z.object({
+  name: z.string().trim().min(2, "Укажите имя").max(48, "Имя слишком длинное"),
+  handle: z
+    .string()
+    .trim()
+    .min(2, "Укажите метку аккаунта")
+    .max(40, "Метка слишком длинная")
+    .refine((value) => /^@[a-zA-Z0-9_]{3,32}$/.test(value), "Формат @account_label"),
+  role: z.string().trim().min(12, "Опишите роль подробнее").max(220, "Роль слишком длинная"),
+  kind: modelProviderSchema
+});
+
+export const eventDialogueSchema = z.object({
+  channel: z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        /^@[a-zA-Z0-9_]{5,32}$/.test(value) ||
+        /^https:\/\/t\.me\/[a-zA-Z0-9_]{5,32}$/.test(value),
+      "Нужен публичный @channel или https://t.me/channel"
+    ),
+  postUrl: z.string().trim().max(240, "Ссылка слишком длинная").optional(),
+  topic: z.string().trim().min(3, "Укажите тему").max(120, "Тема слишком длинная"),
+  postText: z.string().trim().min(20, "Добавьте текст поста").max(2500, "Пост слишком длинный"),
+  turns: z.coerce.number().int().min(2, "Минимум 2 реплики").max(12, "Максимум 12 реплик"),
+  manualApproval: z.boolean().refine(Boolean, "Нужно ручное подтверждение"),
+  noAutoPost: z.boolean().refine(Boolean, "Автопостинг отключен"),
+  ownChannel: z.boolean().refine(Boolean, "Используйте только свой канал/согласованный event")
+});
+
 export type PublicTelegramSourceInput = z.infer<typeof publicTelegramSourceSchema>;
 export type LeadInput = z.infer<typeof leadSchema>;
 export type CampaignInput = z.infer<typeof campaignSchema>;
 export type AiCommentRuleInput = z.infer<typeof aiCommentRuleSchema>;
+export type XedocGatewayConfigInput = z.infer<typeof xedocGatewayConfigSchema>;
+export type EventPersonaInput = z.infer<typeof eventPersonaSchema>;
+export type EventDialogueInput = z.infer<typeof eventDialogueSchema>;

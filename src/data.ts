@@ -73,6 +73,33 @@ export type AiCommentRule = {
   enabled: boolean;
 };
 
+export type ModelProvider = "codex" | "grok" | "gemini-cli" | "gemini";
+
+export type XedocGatewayConfig = {
+  baseUrl: string;
+  token: string;
+  agentId: string;
+  repoId: string;
+  kind: ModelProvider;
+  model: string;
+  waitMs: number;
+};
+
+export type EventPersona = {
+  id: number;
+  name: string;
+  handle: string;
+  role: string;
+  kind: ModelProvider;
+};
+
+export type EventDialogueTurn = {
+  id: number;
+  speaker: string;
+  account: string;
+  reply: string;
+};
+
 export const seedChannels: Channel[] = [
   {
     id: 1,
@@ -258,6 +285,30 @@ export const seedCommentRules: AiCommentRule[] = [
     signature: "Rodion",
     stopWords: ["спам", "массовая рассылка", "инвайт"],
     enabled: true
+  }
+];
+
+export const seedEventPersonas: EventPersona[] = [
+  {
+    id: 1,
+    name: "Event Host",
+    handle: "@event_host",
+    role: "Организатор события: задает тему, держит тон спокойным и полезным.",
+    kind: "codex"
+  },
+  {
+    id: 2,
+    name: "Product Guest",
+    handle: "@product_guest",
+    role: "Участник события: добавляет практический опыт, задает уточняющие вопросы.",
+    kind: "gemini"
+  },
+  {
+    id: 3,
+    name: "Skeptical Founder",
+    handle: "@founder_view",
+    role: "Основатель: мягко спорит, просит примеры и не пишет рекламно.",
+    kind: "grok"
   }
 ];
 

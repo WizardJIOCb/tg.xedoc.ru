@@ -723,6 +723,69 @@ textarea {
   resize: vertical;
 }
 
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.event-dialogue-form,
+.gateway-form,
+.persona-form {
+  margin-top: 2px;
+}
+
+.event-post-input {
+  min-height: 132px;
+}
+
+.status-panel {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-height: 64px;
+  padding: 10px;
+  background: #f7fbfd;
+  border: 1px solid #dfe7ef;
+  border-radius: 8px;
+}
+
+.status-panel small {
+  color: #667888;
+  line-height: 1.35;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 26px;
+  padding: 0 8px;
+  color: #36505c;
+  background: #e8eef6;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.status-pill.loading {
+  color: #895400;
+  background: #fff5de;
+}
+
+.status-pill.success {
+  color: #0f6f48;
+  background: #e9f8ef;
+}
+
+.status-pill.error {
+  color: #9f2438;
+  background: #fff0f2;
+}
+
 input:focus,
 textarea:focus,
 select:focus {
@@ -860,6 +923,73 @@ select:focus {
   min-height: 18px;
   padding: 0;
   accent-color: #0f766e;
+}
+
+.checklist.compact {
+  gap: 8px;
+}
+
+.dialogue-output {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.dialogue-turn strong {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.dialogue-turn strong small {
+  color: #667888;
+  font-weight: 800;
+}
+
+.persona-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #e4edf4;
+}
+
+.compact-header {
+  margin-bottom: 0;
+}
+
+.persona-list {
+  display: grid;
+  gap: 8px;
+}
+
+.persona-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  background: #fbfdff;
+  border: 1px solid #dfe7ef;
+  border-radius: 8px;
+}
+
+.persona-card strong,
+.persona-card small {
+  display: block;
+}
+
+.persona-card small {
+  margin-top: 3px;
+  color: #667888;
+}
+
+.persona-card p {
+  margin: 7px 0 0;
+  color: #344b5a;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .campaign-row {
@@ -1084,7 +1214,8 @@ select:focus {
   }
 
   .stats-grid,
-  .deploy-grid {
+  .deploy-grid,
+  .form-grid.two {
     grid-template-columns: 1fr;
   }
 
