@@ -35,6 +35,31 @@ export const keywordSchema = z.object({
   text: z.string().trim().min(8, "Добавьте текст поста или подборку сообщений").max(1800, "Слишком много текста")
 });
 
+export const aiCommentRuleSchema = z.object({
+  channel: z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        /^@[a-zA-Z0-9_]{5,32}$/.test(value) ||
+        /^https:\/\/t\.me\/[a-zA-Z0-9_]{5,32}$/.test(value),
+      "Нужен публичный @channel или https://t.me/channel"
+    ),
+  persona: z.string().trim().min(12, "Опишите роль ИИ подробнее").max(180, "Роль слишком длинная"),
+  tone: z.enum(["expert", "friendly", "founder", "supportive"]),
+  goal: z.enum(["value", "question", "partner", "clarify"]),
+  maxPerDay: z.coerce.number().int().min(1, "Минимум 1").max(5, "Не больше 5 в день"),
+  manualApproval: z.boolean().refine(Boolean, "Комментарии доступны только с ручным подтверждением"),
+  avoidSalesPitch: z.boolean().refine(Boolean, "Нужен запрет на прямой sales pitch"),
+  signature: z.string().trim().min(2, "Укажите подпись").max(32, "Подпись слишком длинная"),
+  stopWords: z.string().trim().max(160, "Стоп-слова слишком длинные").optional()
+});
+
+export const commentPostSchema = z.object({
+  text: z.string().trim().min(20, "Добавьте текст поста").max(1200, "Пост слишком длинный")
+});
+
 export type PublicTelegramSourceInput = z.infer<typeof publicTelegramSourceSchema>;
 export type LeadInput = z.infer<typeof leadSchema>;
 export type CampaignInput = z.infer<typeof campaignSchema>;
+export type AiCommentRuleInput = z.infer<typeof aiCommentRuleSchema>;

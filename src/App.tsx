@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { type ComponentType, type FormEvent, useMemo, useState } from "react";
 import {
+  type AiCommentRule,
   type Campaign,
   type CampaignStatus,
   type Channel,
@@ -45,16 +46,25 @@ import {
   safetyMap,
   seedCampaigns,
   seedChannels,
+  seedCommentRules,
   seedLeads,
   seedTasks
 } from "./data";
-import { campaignSchema, keywordSchema, leadSchema, publicTelegramSourceSchema } from "./schemas";
+import {
+  aiCommentRuleSchema,
+  campaignSchema,
+  commentPostSchema,
+  keywordSchema,
+  leadSchema,
+  publicTelegramSourceSchema
+} from "./schemas";
 
 const navItems: Array<{ key: NavKey; label: string; icon: ComponentType<{ size?: number }> }> = [
   { key: "dashboard", label: "Пульт", icon: LayoutDashboard },
   { key: "radar", label: "Радар", icon: Radar },
   { key: "crm", label: "CRM", icon: KanbanSquare },
   { key: "campaigns", label: "Кампании", icon: Megaphone },
+  { key: "comments", label: "AI-комменты", icon: MessageSquareText },
   { key: "reports", label: "Отчеты", icon: ChartNoAxesCombined },
   { key: "safety", label: "Защита", icon: ShieldCheck },
   { key: "settings", label: "Настройки", icon: Settings }
@@ -165,11 +175,56 @@ function campaignMessages(goal: string, audience: string) {
   ];
 }
 
+function normalizeChannel(value: string) {
+  return value.startsWith("https://t.me/") ? `@${value.split("/").filter(Boolean).at(-1) ?? ""}` : value;
+}
+
+function describeCommentGoal(goal: AiCommentRule["goal"]) {
+  const labels: Record<AiCommentRule["goal"], string> = {
+    value: "добавить полезный опыт",
+    question: "задать умный вопрос",
+    partner: "нащупать партнерство",
+    clarify: "уточнить детали"
+  };
+  return labels[goal];
+}
+
+function describeCommentTone(tone: AiCommentRule["tone"]) {
+  const labels: Record<AiCommentRule["tone"], string> = {
+    expert: "экспертно",
+    friendly: "дружелюбно",
+    founder: "от лица основателя",
+    supportive: "поддерживающе"
+  };
+  return labels[tone];
+}
+
+function generateCommentDrafts(rule: AiCommentRule | undefined, postText: string) {
+  if (!rule) return [];
+
+  const cleanPost = postText.replace(/\s+/g, " ").trim();
+  const topic = cleanPost.length > 118 ? `${cleanPost.slice(0, 118)}...` : cleanPost;
+  const signature = rule.signature ? `\n\n- ${rule.signature}` : "";
+  const baseContext = `${describeCommentTone(rule.tone)}, цель: ${describeCommentGoal(rule.goal)}`;
+
+  const drafts = [
+    `Хороший разбор. Я бы отдельно проверил, где именно аудитория уже показывает спрос: вопросы в комментариях, повторяющиеся темы постов и динамика просмотров. Это часто точнее, чем смотреть только на размер канала.${signature}`,
+    `Вижу здесь важный сигнал: "${topic}". Если разложить это на воронку, первым шагом я бы собрал публичные каналы по нише, потом отделил теплые обсуждения от просто охватных публикаций.${signature}`,
+    `Согласен с мыслью. Практичный тест: взять 3-5 похожих каналов, сравнить ER, частоту постов и темы, где люди задают вопросы. Так быстрее понять, где есть живой спрос, а где просто шум.${signature}`
+  ];
+
+  return drafts.map((draft) => `${draft}\n\nКонтроль: ${baseContext}; без автопостинга.`);
+}
+
 function App() {
   const [active, setActive] = useState<NavKey>("dashboard");
   const [channels, setChannels] = usePersistentState<Channel[]>("tg-hunter.channels", seedChannels);
   const [leads, setLeads] = usePersistentState<Lead[]>("tg-hunter.leads", seedLeads);
   const [campaigns, setCampaigns] = usePersistentState<Campaign[]>("tg-hunter.campaigns", seedCampaigns);
+  const [commentRules, setCommentRules] = usePersistentState<AiCommentRule[]>(
+    "tg-hunter.commentRules",
+    seedCommentRules
+  );
   const [sourceForm, setSourceForm] = useState({ source: "@", topic: "", note: "" });
   const [leadForm, setLeadForm] = useState({ name: "", source: "", value: "900", consent: true, notes: "" });
   const [campaignForm, setCampaignForm] = useState({
@@ -178,6 +233,21 @@ function App() {
     goal: "demo",
     consentOnly: true
   });
+  const [commentRuleForm, setCommentRuleForm] = useState({
+    channel: "@aiproductlab",
+    persona: "Эксперт по Telegram-росту, который пишет полезные комментарии без продажного давления.",
+    tone: "expert",
+    goal: "value",
+    maxPerDay: "3",
+    manualApproval: true,
+    avoidSalesPitch: true,
+    signature: "TG Hunter",
+    stopWords: "купите, срочно, гарантия, накрутка"
+  });
+  const [selectedRuleId, setSelectedRuleId] = useState(seedCommentRules[0]?.id ?? 0);
+  const [commentPostText, setCommentPostText] = useState(
+    "Пост про запуск AI SaaS: автор показывает рост выручки, Telegram-канал как комьюнити и первые продажи через публичные обсуждения."
+  );
   const [keywordText, setKeywordText] = useState("Telegram CRM для AI SaaS: лиды, аудит каналов, партнерские посевы и воронка демо.");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
@@ -209,6 +279,20 @@ function App() {
     const score = Math.min(100, hits.reduce((sum, item) => sum + item.weight, 18));
     return { score, hits, error: "" };
   }, [keywordText]);
+
+  const selectedCommentRule = useMemo(
+    () => commentRules.find((rule) => rule.id === selectedRuleId) ?? commentRules[0],
+    [commentRules, selectedRuleId]
+  );
+
+  const commentDraftResult = useMemo(() => {
+    const parsed = commentPostSchema.safeParse({ text: commentPostText });
+    if (!parsed.success) {
+      return { drafts: [], error: parsed.error.flatten().fieldErrors.text?.[0] ?? "" };
+    }
+
+    return { drafts: generateCommentDrafts(selectedCommentRule, parsed.data.text), error: "" };
+  }, [commentPostText, selectedCommentRule]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -310,6 +394,42 @@ function App() {
     showToast("Кампания создана");
   };
 
+  const addCommentRule = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const parsed = aiCommentRuleSchema.safeParse(commentRuleForm);
+    if (!parsed.success) {
+      setErrors(getFieldErrors(parsed.error));
+      return;
+    }
+
+    const nextRule: AiCommentRule = {
+      id: Date.now(),
+      channel: normalizeChannel(parsed.data.channel),
+      persona: parsed.data.persona,
+      tone: parsed.data.tone,
+      goal: parsed.data.goal,
+      maxPerDay: parsed.data.maxPerDay,
+      manualApproval: parsed.data.manualApproval,
+      avoidSalesPitch: parsed.data.avoidSalesPitch,
+      signature: parsed.data.signature,
+      stopWords: (parsed.data.stopWords ?? "")
+        .split(",")
+        .map((word) => word.trim())
+        .filter(Boolean),
+      enabled: true
+    };
+
+    setCommentRules((previous) => [nextRule, ...previous]);
+    setSelectedRuleId(nextRule.id);
+    setErrors({});
+    showToast("Правило AI-комментариев добавлено");
+  };
+
+  const copyCommentDraft = async (draft: string) => {
+    await navigator.clipboard.writeText(draft);
+    showToast("Черновик скопирован");
+  };
+
   const exportPlan = () => {
     const payload = {
       product: "TG Hunter",
@@ -318,7 +438,8 @@ function App() {
       policy: "public sources and opt-in contacts only",
       channels,
       leads,
-      campaigns
+      campaigns,
+      commentRules
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -425,6 +546,22 @@ function App() {
             setCampaignForm={setCampaignForm}
             addCampaign={addCampaign}
             errors={errors}
+          />
+        )}
+
+        {active === "comments" && (
+          <CommentsView
+            rules={commentRules}
+            selectedRuleId={selectedRuleId}
+            setSelectedRuleId={setSelectedRuleId}
+            ruleForm={commentRuleForm}
+            setRuleForm={setCommentRuleForm}
+            addRule={addCommentRule}
+            errors={errors}
+            postText={commentPostText}
+            setPostText={setCommentPostText}
+            draftResult={commentDraftResult}
+            copyDraft={copyCommentDraft}
           />
         )}
 
@@ -844,6 +981,179 @@ function CampaignsView({
           <button type="submit" className="button">
             <Sparkles size={17} />
             Сгенерировать
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function CommentsView({
+  rules,
+  selectedRuleId,
+  setSelectedRuleId,
+  ruleForm,
+  setRuleForm,
+  addRule,
+  errors,
+  postText,
+  setPostText,
+  draftResult,
+  copyDraft
+}: {
+  rules: AiCommentRule[];
+  selectedRuleId: number;
+  setSelectedRuleId: (id: number) => void;
+  ruleForm: {
+    channel: string;
+    persona: string;
+    tone: string;
+    goal: string;
+    maxPerDay: string;
+    manualApproval: boolean;
+    avoidSalesPitch: boolean;
+    signature: string;
+    stopWords: string;
+  };
+  setRuleForm: (value: {
+    channel: string;
+    persona: string;
+    tone: string;
+    goal: string;
+    maxPerDay: string;
+    manualApproval: boolean;
+    avoidSalesPitch: boolean;
+    signature: string;
+    stopWords: string;
+  }) => void;
+  addRule: (event: FormEvent<HTMLFormElement>) => void;
+  errors: Record<string, string>;
+  postText: string;
+  setPostText: (value: string) => void;
+  draftResult: { drafts: string[]; error: string };
+  copyDraft: (draft: string) => void;
+}) {
+  const selectedRule = rules.find((rule) => rule.id === selectedRuleId) ?? rules[0];
+
+  return (
+    <div className="view-grid">
+      <section className="section wide">
+        <SectionHeader icon={MessageSquareText} title="AI-комментарии под постами" />
+        <div className="comment-workbench">
+          <div className="rule-list">
+            {rules.map((rule) => (
+              <button
+                type="button"
+                className={rule.id === selectedRule?.id ? "rule-card active" : "rule-card"}
+                key={rule.id}
+                onClick={() => setSelectedRuleId(rule.id)}
+              >
+                <div>
+                  <strong>{rule.channel}</strong>
+                  <small>{describeCommentTone(rule.tone)} · {describeCommentGoal(rule.goal)}</small>
+                </div>
+                <span>{rule.maxPerDay}/день</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="comment-generator">
+            <div className="comment-policy">
+              <ShieldCheck size={18} />
+              <span>Только черновики: ручное подтверждение, без автопостинга и без прямого sales pitch.</span>
+            </div>
+            <Field label="Текст поста для черновика" error={draftResult.error}>
+              <textarea value={postText} onChange={(event) => setPostText(event.target.value)} />
+            </Field>
+            <div className="message-stack">
+              {draftResult.drafts.map((draft, index) => (
+                <div className="message-row comment-draft" key={draft}>
+                  <span>{index + 1}</span>
+                  <p>{draft}</p>
+                  <button type="button" className="mini-button" title="Копировать" onClick={() => copyDraft(draft)}>
+                    <Copy size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <SectionHeader icon={Settings} title="Новое правило" />
+        <form className="form" onSubmit={addRule}>
+          <Field label="Канал" error={errors.channel}>
+            <input
+              value={ruleForm.channel}
+              onChange={(event) => setRuleForm({ ...ruleForm, channel: event.target.value })}
+              placeholder="@channel"
+            />
+          </Field>
+          <Field label="Роль ИИ" error={errors.persona}>
+            <textarea
+              value={ruleForm.persona}
+              onChange={(event) => setRuleForm({ ...ruleForm, persona: event.target.value })}
+            />
+          </Field>
+          <Field label="Тон" error={errors.tone}>
+            <select value={ruleForm.tone} onChange={(event) => setRuleForm({ ...ruleForm, tone: event.target.value })}>
+              <option value="expert">Экспертный</option>
+              <option value="friendly">Дружелюбный</option>
+              <option value="founder">Основатель</option>
+              <option value="supportive">Поддерживающий</option>
+            </select>
+          </Field>
+          <Field label="Цель" error={errors.goal}>
+            <select value={ruleForm.goal} onChange={(event) => setRuleForm({ ...ruleForm, goal: event.target.value })}>
+              <option value="value">Добавить пользу</option>
+              <option value="question">Задать вопрос</option>
+              <option value="partner">Партнерство</option>
+              <option value="clarify">Уточнить</option>
+            </select>
+          </Field>
+          <Field label="Лимит в день" error={errors.maxPerDay}>
+            <input
+              type="number"
+              min="1"
+              max="5"
+              value={ruleForm.maxPerDay}
+              onChange={(event) => setRuleForm({ ...ruleForm, maxPerDay: event.target.value })}
+            />
+          </Field>
+          <Field label="Подпись" error={errors.signature}>
+            <input
+              value={ruleForm.signature}
+              onChange={(event) => setRuleForm({ ...ruleForm, signature: event.target.value })}
+            />
+          </Field>
+          <Field label="Стоп-слова" error={errors.stopWords}>
+            <input
+              value={ruleForm.stopWords}
+              onChange={(event) => setRuleForm({ ...ruleForm, stopWords: event.target.value })}
+            />
+          </Field>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={ruleForm.manualApproval}
+              onChange={(event) => setRuleForm({ ...ruleForm, manualApproval: event.target.checked })}
+            />
+            <span>Ручное подтверждение</span>
+          </label>
+          {errors.manualApproval && <span className="error-text">{errors.manualApproval}</span>}
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={ruleForm.avoidSalesPitch}
+              onChange={(event) => setRuleForm({ ...ruleForm, avoidSalesPitch: event.target.checked })}
+            />
+            <span>Без прямого sales pitch</span>
+          </label>
+          {errors.avoidSalesPitch && <span className="error-text">{errors.avoidSalesPitch}</span>}
+          <button type="submit" className="button">
+            <Plus size={17} />
+            Добавить правило
           </button>
         </form>
       </section>

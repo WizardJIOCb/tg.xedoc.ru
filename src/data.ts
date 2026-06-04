@@ -1,4 +1,4 @@
-export type NavKey = "dashboard" | "radar" | "crm" | "campaigns" | "reports" | "safety" | "settings";
+export type NavKey = "dashboard" | "radar" | "crm" | "campaigns" | "comments" | "reports" | "safety" | "settings";
 
 export type ChannelRisk = "low" | "medium" | "high";
 export type ChannelStatus = "watching" | "candidate" | "partner";
@@ -57,6 +57,20 @@ export type Task = {
   owner: string;
   status: "queued" | "today" | "done";
   type: "research" | "crm" | "campaign" | "safety";
+};
+
+export type AiCommentRule = {
+  id: number;
+  channel: string;
+  persona: string;
+  tone: "expert" | "friendly" | "founder" | "supportive";
+  goal: "value" | "question" | "partner" | "clarify";
+  maxPerDay: number;
+  manualApproval: boolean;
+  avoidSalesPitch: boolean;
+  signature: string;
+  stopWords: string[];
+  enabled: boolean;
 };
 
 export const seedChannels: Channel[] = [
@@ -215,6 +229,35 @@ export const seedCampaigns: Campaign[] = [
       "Подготовил медиакит с прогнозом охвата и CPA.",
       "Готов обсудить условия и прозрачную маркировку."
     ]
+  }
+];
+
+export const seedCommentRules: AiCommentRule[] = [
+  {
+    id: 1,
+    channel: "@aiproductlab",
+    persona: "Основатель B2B SaaS, который делится практикой Telegram-роста.",
+    tone: "expert",
+    goal: "value",
+    maxPerDay: 3,
+    manualApproval: true,
+    avoidSalesPitch: true,
+    signature: "TG Hunter",
+    stopWords: ["купите", "срочно", "гарантия", "накрутка"],
+    enabled: true
+  },
+  {
+    id: 2,
+    channel: "@foundersignalsru",
+    persona: "Аккуратный growth-консультант, который задает полезные уточняющие вопросы.",
+    tone: "friendly",
+    goal: "question",
+    maxPerDay: 2,
+    manualApproval: true,
+    avoidSalesPitch: true,
+    signature: "Rodion",
+    stopWords: ["спам", "массовая рассылка", "инвайт"],
+    enabled: true
   }
 ];
 

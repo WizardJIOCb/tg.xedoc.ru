@@ -459,16 +459,87 @@ a {
   gap: 10px;
 }
 
+.comment-workbench {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.rule-list,
+.comment-generator {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
 .timeline-row,
 .task-row,
 .metric-row,
 .lead-row,
 .campaign-row,
 .message-row,
-.safety-row {
+.safety-row,
+.rule-card,
+.comment-policy {
   border: 1px solid #dfe7ef;
   border-radius: 8px;
   background: #fbfdff;
+}
+
+.rule-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-height: 72px;
+  padding: 10px;
+  color: #17232c;
+  text-align: left;
+}
+
+.rule-card.active,
+.rule-card:hover {
+  border-color: #9fd8cf;
+  background: #effaf7;
+}
+
+.rule-card strong,
+.rule-card small {
+  display: block;
+}
+
+.rule-card small {
+  margin-top: 4px;
+  color: #667888;
+  line-height: 1.35;
+}
+
+.rule-card span {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.comment-policy {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  color: #34515e;
+  background: #f4fbf9;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.comment-policy svg {
+  color: #0f766e;
+}
+
+.comment-draft p {
+  white-space: pre-wrap;
 }
 
 .timeline-row {
@@ -938,7 +1009,8 @@ select:focus {
 
   .view-grid,
   .dashboard-grid,
-  .keyword-layout {
+  .keyword-layout,
+  .comment-workbench {
     grid-template-columns: 1fr;
   }
 
