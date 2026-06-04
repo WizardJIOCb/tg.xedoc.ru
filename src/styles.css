@@ -38,6 +38,42 @@ a {
   text-decoration: none;
 }
 
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  background:
+    linear-gradient(180deg, rgba(15, 118, 110, 0.12), rgba(244, 247, 251, 0) 360px),
+    #f4f7fb;
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 420px);
+  padding: 22px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #dfe7ef;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(20, 41, 54, 0.14);
+}
+
+.auth-card h1,
+.auth-card p {
+  margin: 0;
+}
+
+.auth-card h1 {
+  font-size: 30px;
+  line-height: 1.1;
+}
+
+.auth-card p:not(.eyebrow) {
+  color: #5f7280;
+  line-height: 1.45;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -211,6 +247,20 @@ a {
 
 .button.secondary:hover {
   background: #dce6f0;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  color: #12312f;
+  background: #e7f7f3;
+  border: 1px solid #bee7dd;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .icon-button,
@@ -732,6 +782,10 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.form-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .event-dialogue-form,
 .gateway-form,
 .persona-form {
@@ -756,6 +810,12 @@ textarea {
 .status-panel small {
   color: #667888;
   line-height: 1.35;
+}
+
+.server-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .status-pill {
@@ -1115,6 +1175,43 @@ select:focus {
   border-radius: 8px;
 }
 
+.user-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.user-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px;
+  background: #fbfdff;
+  border: 1px solid #dfe7ef;
+  border-radius: 8px;
+}
+
+.user-row strong,
+.user-row small {
+  display: block;
+}
+
+.user-row small,
+.user-row span {
+  color: #667888;
+  font-size: 12px;
+}
+
+.user-row span {
+  white-space: nowrap;
+}
+
+.user-form {
+  margin-top: 10px;
+}
+
 .toast {
   position: fixed;
   right: 20px;
@@ -1215,7 +1312,9 @@ select:focus {
 
   .stats-grid,
   .deploy-grid,
-  .form-grid.two {
+  .form-grid.two,
+  .form-grid.three,
+  .server-status-grid {
     grid-template-columns: 1fr;
   }
 

@@ -34,7 +34,7 @@ import {
   WandSparkles,
   X
 } from "lucide-react";
-import { type ComponentType, type FormEvent, useMemo, useState } from "react";
+import { type ComponentType, type FormEvent, useEffect, useMemo, useState } from "react";
 import {
   type AiCommentRule,
   type Campaign,
@@ -171,6 +171,55 @@ type GatewayRunResponse = {
   job?: { status?: string; finalMessage?: string | null };
   error?: string;
 };
+
+type AuthUser = {
+  id: string;
+  username: string;
+  role: "admin" | "user";
+  createdAt?: string;
+};
+
+type SavedComment = {
+  id: number;
+  channel: string;
+  postText: string;
+  text: string;
+  status: "draft" | "sent";
+  createdAt: string;
+};
+
+type ServerState = {
+  user: AuthUser;
+  channels: Channel[];
+  commentRules: AiCommentRule[];
+  comments: SavedComment[];
+  users: AuthUser[];
+  xedocConfigured: boolean;
+  telegramPostingConfigured: boolean;
+};
+
+type DraftResult = {
+  drafts: string[];
+  error: string;
+  loading?: boolean;
+};
+
+async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, {
+    credentials: "include",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers ?? {})
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = typeof payload.error === "string" ? payload.error : `HTTP ${response.status}`;
+    throw new Error(error);
+  }
+  return payload as T;
+}
 
 function usePersistentState<T>(key: string, initialValue: T) {
   const [value, setValue] = useState<T>(() => {
@@ -376,6 +425,15 @@ function buildTurnPrompt(
 }
 
 function App() {
+  const [auth, setAuth] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginForm, setLoginForm] = useState({ username: "rodion", password: "" });
+  const [loginError, setLoginError] = useState("");
+  const [serverInfo, setServerInfo] = useState({ xedocConfigured: false, telegramPostingConfigured: false });
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [userForm, setUserForm] = useState({ username: "", password: "", role: "user" });
+  const [savedComments, setSavedComments] = useState<SavedComment[]>([]);
+  const [serverDraftResult, setServerDraftResult] = useState<DraftResult>({ drafts: [], error: "" });
   const [active, setActive] = useState<NavKey>("dashboard");
   const [channels, setChannels] = usePersistentState<Channel[]>("tg-hunter.channels", seedChannels);
   const [leads, setLeads] = usePersistentState<Lead[]>("tg-hunter.leads", seedLeads);
@@ -471,12 +529,71 @@ function App() {
     return { drafts: generateCommentDrafts(selectedCommentRule, parsed.data.text), error: "" };
   }, [commentPostText, selectedCommentRule]);
 
+  const visibleCommentDraftResult = serverDraftResult.drafts.length || serverDraftResult.loading || serverDraftResult.error
+    ? serverDraftResult
+    : commentDraftResult;
+
+  const applyServerState = (state: ServerState) => {
+    setAuth(state.user);
+    setChannels(state.channels);
+    setCommentRules(state.commentRules);
+    setSavedComments(state.comments);
+    setUsers(state.users);
+    setServerInfo({
+      xedocConfigured: state.xedocConfigured,
+      telegramPostingConfigured: state.telegramPostingConfigured
+    });
+  };
+
+  useEffect(() => {
+    let alive = true;
+    apiRequest<ServerState>("/api/state")
+      .then((state) => {
+        if (!alive) return;
+        applyServerState(state);
+      })
+      .catch(() => {
+        if (alive) setAuth(null);
+      })
+      .finally(() => {
+        if (alive) setAuthLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setGatewayConfig((previous) => previous.token ? { ...previous, token: "" } : previous);
+  }, []);
+
   const showToast = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   };
 
-  const addChannel = (event: FormEvent<HTMLFormElement>) => {
+  const login = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginError("");
+    try {
+      const response = await apiRequest<{ user: AuthUser; state: ServerState }>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(loginForm)
+      });
+      applyServerState(response.state);
+      showToast(`Вошли как ${response.user.username}`);
+    } catch {
+      setLoginError("Неверный логин или пароль");
+    }
+  };
+
+  const logout = async () => {
+    await apiRequest("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    setAuth(null);
+    showToast("Сессия завершена");
+  };
+
+  const addChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const parsed = publicTelegramSourceSchema.safeParse(sourceForm);
     if (!parsed.success) {
@@ -484,31 +601,20 @@ function App() {
       return;
     }
 
-    const source = parsed.data.source.startsWith("https://t.me/")
-      ? `@${parsed.data.source.split("/").filter(Boolean).at(-1) ?? ""}`
-      : parsed.data.source;
-
-    const nextChannel: Channel = {
-      id: Date.now(),
-      title: titleFromHandle(source),
-      handle: source,
-      topic: parsed.data.topic,
-      members: 8000 + Math.floor(Math.random() * 38000),
-      growth: Number((4 + Math.random() * 11).toFixed(1)),
-      engagement: Number((5 + Math.random() * 9).toFixed(1)),
-      avgViews: 2500 + Math.floor(Math.random() * 12000),
-      postsPerDay: 1 + Math.floor(Math.random() * 4),
-      source: "manual",
-      risk: "low",
-      keywords: [parsed.data.topic.toLowerCase(), "telegram", "research"],
-      lastSignal: parsed.data.note || "добавлен в ручную проверку",
-      status: "candidate"
-    };
-
-    setChannels((previous) => [nextChannel, ...previous]);
-    setSourceForm({ source: "@", topic: "", note: "" });
-    setErrors({});
-    showToast("Источник добавлен в радар");
+    try {
+      const response = await apiRequest<{ channels: Channel[] }>("/api/channels", {
+        method: "POST",
+        body: JSON.stringify(parsed.data)
+      });
+      setChannels(response.channels);
+      setSourceForm({ source: "@", topic: "", note: "" });
+      setErrors({});
+      showToast("Источник добавлен в радар");
+    } catch (error) {
+      setErrors({
+        source: error instanceof Error && error.message === "channel_exists" ? "Канал уже добавлен" : "Не удалось добавить канал"
+      });
+    }
   };
 
   const addLead = (event: FormEvent<HTMLFormElement>) => {
@@ -607,6 +713,34 @@ function App() {
     showToast("Черновик скопирован");
   };
 
+  const generateAiComments = async () => {
+    const parsed = commentPostSchema.safeParse({ text: commentPostText });
+    if (!parsed.success) {
+      setServerDraftResult({ drafts: [], error: parsed.error.flatten().fieldErrors.text?.[0] ?? "" });
+      return;
+    }
+    setServerDraftResult({ drafts: [], error: "", loading: true });
+    try {
+      const response = await apiRequest<{ drafts: string[]; comments: SavedComment[] }>("/api/comments/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          channel: selectedCommentRule?.channel ?? "@aiproductlab",
+          postText: parsed.data.text,
+          persona: selectedCommentRule?.persona,
+          tone: selectedCommentRule?.tone,
+          goal: selectedCommentRule?.goal,
+          provider: gatewayConfig.kind,
+          count: 3
+        })
+      });
+      setServerDraftResult({ drafts: response.drafts, error: "" });
+      setSavedComments((previous) => [...response.comments, ...previous]);
+      showToast("AI-комментарии готовы");
+    } catch {
+      setServerDraftResult({ drafts: [], error: "Не удалось вызвать AI. Локальные черновики ниже остаются доступны." });
+    }
+  };
+
   const addPersona = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const parsed = eventPersonaSchema.safeParse(personaForm);
@@ -635,13 +769,6 @@ function App() {
 
   const generateEventDialogue = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const parsedGateway = xedocGatewayConfigSchema.safeParse(gatewayConfig);
-    if (!parsedGateway.success) {
-      setErrors(getFieldErrors(parsedGateway.error));
-      setGatewayStatus({ state: "error", message: "Проверьте настройки xedoc.ru gateway" });
-      return;
-    }
-
     const parsedDialogue = eventDialogueSchema.safeParse(dialogueForm);
     if (!parsedDialogue.success) {
       setErrors(getFieldErrors(parsedDialogue.error));
@@ -654,68 +781,21 @@ function App() {
       return;
     }
 
-    const gateway: XedocGatewayConfig = {
-      ...gatewayConfig,
-      ...parsedGateway.data,
-      agentId: parsedGateway.data.agentId ?? "",
-      repoId: parsedGateway.data.repoId ?? "",
-      model: parsedGateway.data.model ?? ""
-    };
-    const dialogueInput: EventDialogueFormState = {
-      ...parsedDialogue.data,
-      postUrl: parsedDialogue.data.postUrl ?? "",
-      turns: String(parsedDialogue.data.turns)
-    };
     const personas = eventPersonas.slice(0, 8);
-    const title = `TG event ${normalizeChannel(parsedDialogue.data.channel)}: ${parsedDialogue.data.topic}`.slice(0, 160);
-
     setErrors({});
     setEventDialogue([]);
-    setGatewayStatus({ state: "loading", message: "Создаю чат на xedoc.ru" });
+    setGatewayStatus({ state: "loading", message: "Генерирую диалог через серверный xedoc.ru gateway" });
 
     try {
-      const chat = await gatewayRequest<GatewayChatResponse>(gateway, "/api/external/model/chats", {
-        agentId: gateway.agentId.trim() || undefined,
-        repoId: gateway.repoId.trim() || undefined,
-        title,
-        source: "tg-hunter",
-        externalId: `tg-hunter:${Date.now()}`,
-        systemPrompt:
-          "TG Hunter event dialogue workspace. Generate transparent event-comment drafts for manual approval only. Do not automate Telegram posting."
+      const response = await apiRequest<{ turns: EventDialogueTurn[] }>("/api/event-dialogues/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          ...parsedDialogue.data,
+          personas
+        })
       });
-
-      let transcript: EventDialogueTurn[] = [];
-      for (let index = 1; index <= parsedDialogue.data.turns; index += 1) {
-        const persona = personas[(index - 1) % personas.length];
-        if (!persona) break;
-        setGatewayStatus({
-          state: "loading",
-          message: `${index}/${parsedDialogue.data.turns}: ${persona.name} через ${providerLabels[persona.kind]}`
-        });
-        const run = await gatewayRequest<GatewayRunResponse>(
-          gateway,
-          `/api/external/model/chats/${encodeURIComponent(chat.chatId)}/messages`,
-          {
-            ...modelBody(gateway, persona.kind),
-            prompt: buildTurnPrompt(dialogueInput, personas, persona, transcript, index),
-            displayPrompt: `Реплика ${index}: ${persona.name} (${persona.handle})`
-          }
-        );
-        const reply = cleanModelReply(run.finalMessage ?? run.job?.finalMessage);
-        if (!reply) throw new Error(`Пустой ответ модели на реплике ${index}`);
-        transcript = [
-          ...transcript,
-          {
-            id: Date.now() + index,
-            speaker: persona.name,
-            account: persona.handle,
-            reply
-          }
-        ];
-        setEventDialogue(transcript);
-      }
-
-      setGatewayStatus({ state: "success", message: `Диалог создан: ${transcript.length} реплик, chat ${chat.chatId}` });
+      setEventDialogue(response.turns);
+      setGatewayStatus({ state: "success", message: `Диалог создан: ${response.turns.length} реплик` });
       showToast("Диалог события создан");
     } catch (error) {
       setGatewayStatus({
@@ -731,6 +811,26 @@ function App() {
       eventDialogue.map((turn) => `${turn.speaker} (${turn.account}): ${turn.reply}`).join("\n\n")
     );
     showToast("Диалог скопирован");
+  };
+
+  const createUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!userForm.username.trim() || userForm.password.length < 8) {
+      setErrors({ username: "Укажите логин", password: "Минимум 8 символов" });
+      return;
+    }
+    try {
+      const response = await apiRequest<{ users: AuthUser[] }>("/api/users", {
+        method: "POST",
+        body: JSON.stringify(userForm)
+      });
+      setUsers(response.users);
+      setUserForm({ username: "", password: "", role: "user" });
+      setErrors({});
+      showToast("Пользователь создан");
+    } catch (error) {
+      setErrors({ username: error instanceof Error && error.message === "user_exists" ? "Такой пользователь уже есть" : "Не удалось создать пользователя" });
+    }
   };
 
   const exportPlan = () => {
@@ -759,6 +859,29 @@ function App() {
     URL.revokeObjectURL(url);
     showToast("План экспортирован");
   };
+
+  if (authLoading) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <Radar size={26} />
+          <h1>TG Hunter</h1>
+          <p>Загружаю рабочее пространство...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!auth) {
+    return (
+      <LoginView
+        loginForm={loginForm}
+        setLoginForm={setLoginForm}
+        loginError={loginError}
+        login={login}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -804,8 +927,13 @@ function App() {
             <h1>{navItems.find((item) => item.key === active)?.label}</h1>
           </div>
           <div className="topbar-actions">
+            <span className="user-pill">{auth.username} · {auth.role}</span>
             <button type="button" className="icon-button" title="Экспорт" onClick={exportPlan}>
               <Download size={18} />
+            </button>
+            <button type="button" className="button secondary" onClick={logout}>
+              <Lock size={17} />
+              Выйти
             </button>
             <a className="button secondary" href="https://t.me" target="_blank" rel="noreferrer">
               <ExternalLink size={17} />
@@ -869,8 +997,9 @@ function App() {
             errors={errors}
             postText={commentPostText}
             setPostText={setCommentPostText}
-            draftResult={commentDraftResult}
+            draftResult={visibleCommentDraftResult}
             copyDraft={copyCommentDraft}
+            generateAiComments={generateAiComments}
             gatewayConfig={gatewayConfig}
             setGatewayConfig={setGatewayConfig}
             eventPersonas={eventPersonas}
@@ -884,6 +1013,7 @@ function App() {
             eventDialogue={eventDialogue}
             gatewayStatus={gatewayStatus}
             copyEventDialogue={copyEventDialogue}
+            serverInfo={serverInfo}
           />
         )}
 
@@ -891,7 +1021,17 @@ function App() {
 
         {active === "safety" && <SafetyView />}
 
-        {active === "settings" && <SettingsView exportPlan={exportPlan} />}
+        {active === "settings" && (
+          <SettingsView
+            exportPlan={exportPlan}
+            auth={auth}
+            users={users}
+            userForm={userForm}
+            setUserForm={setUserForm}
+            createUser={createUser}
+            serverInfo={serverInfo}
+          />
+        )}
       </main>
 
       {toast && (
@@ -900,6 +1040,52 @@ function App() {
           {toast}
         </div>
       )}
+    </div>
+  );
+}
+
+function LoginView({
+  loginForm,
+  setLoginForm,
+  loginError,
+  login
+}: {
+  loginForm: { username: string; password: string };
+  setLoginForm: (value: { username: string; password: string }) => void;
+  loginError: string;
+  login: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="auth-screen">
+      <form className="auth-card" onSubmit={login}>
+        <span className="brand-mark">
+          <Radar size={24} />
+        </span>
+        <div>
+          <p className="eyebrow">TG Hunter Admin</p>
+          <h1>Вход</h1>
+          <p>Доступ к каналам, AI-комментариям и event-диалогам.</p>
+        </div>
+        <Field label="Логин">
+          <input
+            autoComplete="username"
+            value={loginForm.username}
+            onChange={(event) => setLoginForm({ ...loginForm, username: event.target.value })}
+          />
+        </Field>
+        <Field label="Пароль" error={loginError}>
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={loginForm.password}
+            onChange={(event) => setLoginForm({ ...loginForm, password: event.target.value })}
+          />
+        </Field>
+        <button type="submit" className="button">
+          <Lock size={17} />
+          Войти
+        </button>
+      </form>
     </div>
   );
 }
@@ -1322,6 +1508,7 @@ function CommentsView({
   setPostText,
   draftResult,
   copyDraft,
+  generateAiComments,
   gatewayConfig,
   setGatewayConfig,
   eventPersonas,
@@ -1334,7 +1521,8 @@ function CommentsView({
   generateEventDialogue,
   eventDialogue,
   gatewayStatus,
-  copyEventDialogue
+  copyEventDialogue,
+  serverInfo
 }: {
   rules: AiCommentRule[];
   selectedRuleId: number;
@@ -1365,8 +1553,9 @@ function CommentsView({
   errors: Record<string, string>;
   postText: string;
   setPostText: (value: string) => void;
-  draftResult: { drafts: string[]; error: string };
+  draftResult: DraftResult;
   copyDraft: (draft: string) => void;
+  generateAiComments: () => void;
   gatewayConfig: XedocGatewayConfig;
   setGatewayConfig: (value: XedocGatewayConfig) => void;
   eventPersonas: EventPersona[];
@@ -1380,6 +1569,7 @@ function CommentsView({
   eventDialogue: EventDialogueTurn[];
   gatewayStatus: GatewayStatus;
   copyEventDialogue: () => void;
+  serverInfo: { xedocConfigured: boolean; telegramPostingConfigured: boolean };
 }) {
   const selectedRule = rules.find((rule) => rule.id === selectedRuleId) ?? rules[0];
 
@@ -1413,6 +1603,15 @@ function CommentsView({
             <Field label="Текст поста для черновика" error={draftResult.error}>
               <textarea value={postText} onChange={(event) => setPostText(event.target.value)} />
             </Field>
+            <div className="command-actions">
+              <button type="button" className="button" onClick={generateAiComments} disabled={draftResult.loading}>
+                <Sparkles size={17} />
+                {draftResult.loading ? "Генерирую..." : "Сгенерировать через xedoc.ru"}
+              </button>
+              <span className={`status-pill ${serverInfo.xedocConfigured ? "success" : "error"}`}>
+                {serverInfo.xedocConfigured ? "AI gateway online" : "AI gateway off"}
+              </span>
+            </div>
             <div className="message-stack">
               {draftResult.drafts.map((draft, index) => (
                 <div className="message-row comment-draft" key={draft}>
@@ -1619,35 +1818,19 @@ function CommentsView({
       <section className="section">
         <SectionHeader icon={Bot} title="xedoc.ru models" />
         <div className="form gateway-form">
-          <Field label="API base" error={errors.baseUrl}>
-            <input
-              value={gatewayConfig.baseUrl}
-              onChange={(event) => setGatewayConfig({ ...gatewayConfig, baseUrl: event.target.value })}
-            />
-          </Field>
-          <Field label="Bearer token" error={errors.token}>
-            <input
-              type="password"
-              value={gatewayConfig.token}
-              onChange={(event) => setGatewayConfig({ ...gatewayConfig, token: event.target.value })}
-              placeholder="MODEL_API_TOKEN"
-            />
-          </Field>
-          <div className="form-grid two">
-            <Field label="Agent ID" error={errors.agentId}>
-              <input
-                value={gatewayConfig.agentId}
-                onChange={(event) => setGatewayConfig({ ...gatewayConfig, agentId: event.target.value })}
-                placeholder="env default"
-              />
-            </Field>
-            <Field label="Repo ID" error={errors.repoId}>
-              <input
-                value={gatewayConfig.repoId}
-                onChange={(event) => setGatewayConfig({ ...gatewayConfig, repoId: event.target.value })}
-                placeholder="env default"
-              />
-            </Field>
+          <div className="server-status-grid">
+            <div className="status-panel">
+              <span className={`status-pill ${serverInfo.xedocConfigured ? "success" : "error"}`}>
+                {serverInfo.xedocConfigured ? "Gateway connected" : "Gateway missing"}
+              </span>
+              <small>MODEL_API_TOKEN хранится на сервере, не в браузере.</small>
+            </div>
+            <div className="status-panel">
+              <span className={`status-pill ${serverInfo.telegramPostingConfigured ? "success" : "error"}`}>
+                {serverInfo.telegramPostingConfigured ? "Telegram Bot API ready" : "Manual drafts mode"}
+              </span>
+              <small>Публикация доступна только через официального бота и подтверждение канала.</small>
+            </div>
           </div>
           <div className="form-grid two">
             <Field label="Модель по умолчанию" error={errors.kind}>
@@ -1659,13 +1842,6 @@ function CommentsView({
                   <option value={value} key={value}>{label}</option>
                 ))}
               </select>
-            </Field>
-            <Field label="Model override" error={errors.model}>
-              <input
-                value={gatewayConfig.model}
-                onChange={(event) => setGatewayConfig({ ...gatewayConfig, model: event.target.value })}
-                placeholder="optional"
-              />
             </Field>
           </div>
           <Field label="Ожидание ответа, мс" error={errors.waitMs}>
@@ -1846,7 +2022,23 @@ function SafetyView() {
   );
 }
 
-function SettingsView({ exportPlan }: { exportPlan: () => void }) {
+function SettingsView({
+  exportPlan,
+  auth,
+  users,
+  userForm,
+  setUserForm,
+  createUser,
+  serverInfo
+}: {
+  exportPlan: () => void;
+  auth: AuthUser;
+  users: AuthUser[];
+  userForm: { username: string; password: string; role: string };
+  setUserForm: (value: { username: string; password: string; role: string }) => void;
+  createUser: (event: FormEvent<HTMLFormElement>) => void;
+  serverInfo: { xedocConfigured: boolean; telegramPostingConfigured: boolean };
+}) {
   return (
     <div className="view-grid">
       <section className="section wide">
@@ -1858,14 +2050,68 @@ function SettingsView({ exportPlan }: { exportPlan: () => void }) {
           </div>
           <div>
             <small>Локальный upstream</small>
-            <strong>127.0.0.1:3010</strong>
+            <strong>127.0.0.1:3021</strong>
           </div>
           <div>
             <small>Runtime</small>
-            <strong>nginx + static build</strong>
+            <strong>nginx + Node API + static build</strong>
+          </div>
+          <div>
+            <small>xedoc.ru gateway</small>
+            <strong>{serverInfo.xedocConfigured ? "connected" : "not configured"}</strong>
+          </div>
+          <div>
+            <small>Telegram posting</small>
+            <strong>{serverInfo.telegramPostingConfigured ? "bot configured" : "manual drafts"}</strong>
           </div>
         </div>
       </section>
+
+      {auth.role === "admin" && (
+        <section className="section wide">
+          <SectionHeader icon={UsersRound} title="Пользователи" />
+          <div className="user-list">
+            {users.map((user) => (
+              <div className="user-row" key={user.id}>
+                <div>
+                  <strong>{user.username}</strong>
+                  <small>{user.role}</small>
+                </div>
+                <span>{user.createdAt ? new Date(user.createdAt).toLocaleDateString("ru-RU") : "new"}</span>
+              </div>
+            ))}
+          </div>
+          <form className="form user-form" onSubmit={createUser}>
+            <div className="form-grid three">
+              <Field label="Логин">
+                <input
+                  value={userForm.username}
+                  onChange={(event) => setUserForm({ ...userForm, username: event.target.value })}
+                  placeholder="manager"
+                />
+              </Field>
+              <Field label="Пароль">
+                <input
+                  type="password"
+                  value={userForm.password}
+                  onChange={(event) => setUserForm({ ...userForm, password: event.target.value })}
+                  placeholder="8+ символов"
+                />
+              </Field>
+              <Field label="Роль">
+                <select value={userForm.role} onChange={(event) => setUserForm({ ...userForm, role: event.target.value })}>
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                </select>
+              </Field>
+            </div>
+            <button type="submit" className="button">
+              <Plus size={17} />
+              Создать пользователя
+            </button>
+          </form>
+        </section>
+      )}
 
       <section className="section">
         <SectionHeader icon={ClipboardCheck} title="Операции" />

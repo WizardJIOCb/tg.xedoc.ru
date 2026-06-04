@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .checks/
+data/
 .env
 .env.local
 .DS_Store

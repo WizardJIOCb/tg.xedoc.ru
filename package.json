@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5177",
+    "server:dev": "node server/server.mjs",
+    "start": "node server/server.mjs",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview --host 127.0.0.1 --port 4177"
