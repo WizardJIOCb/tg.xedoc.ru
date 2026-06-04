@@ -105,7 +105,9 @@ type EventPersonaFormState = {
   name: string;
   handle: string;
   role: string;
+  topics: string;
   kind: ModelProvider;
+  enabled: boolean;
 };
 
 type EventDialogueFormState = {
@@ -138,7 +140,9 @@ const defaultPersonaForm: EventPersonaFormState = {
   name: "Event Guest",
   handle: "@event_guest",
   role: "Участник события: пишет коротко, по делу, задает один уточняющий вопрос.",
-  kind: "codex"
+  topics: "AI event, Telegram discussion, useful questions",
+  kind: "codex",
+  enabled: true
 };
 
 const defaultDialogueForm: EventDialogueFormState = {
@@ -192,6 +196,7 @@ type ServerState = {
   user: AuthUser;
   channels: Channel[];
   commentRules: AiCommentRule[];
+  eventPersonas: EventPersona[];
   comments: SavedComment[];
   users: AuthUser[];
   xedocConfigured: boolean;
@@ -542,6 +547,7 @@ function App() {
     setAuth(state.user);
     setChannels(state.channels);
     setCommentRules(state.commentRules);
+    setEventPersonas(state.eventPersonas);
     setSavedComments(state.comments);
     setUsers(state.users);
     setServerInfo({
@@ -767,7 +773,7 @@ function App() {
     }
   };
 
-  const addPersona = (event: FormEvent<HTMLFormElement>) => {
+  const addPersona = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const parsed = eventPersonaSchema.safeParse(personaForm);
     if (!parsed.success) {
@@ -775,22 +781,35 @@ function App() {
       return;
     }
 
-    const nextPersona: EventPersona = {
-      id: Date.now(),
-      name: parsed.data.name,
-      handle: parsed.data.handle,
-      role: parsed.data.role,
-      kind: parsed.data.kind
-    };
-    setEventPersonas((previous) => [...previous, nextPersona]);
-    setPersonaForm(defaultPersonaForm);
-    setErrors({});
+    try {
+      const response = await apiRequest<{ eventPersonas: EventPersona[] }>("/api/event-personas", {
+        method: "POST",
+        body: JSON.stringify(parsed.data)
+      });
+      setEventPersonas(response.eventPersonas);
+      setPersonaForm(defaultPersonaForm);
+      setErrors({});
     showToast("Event-аккаунт добавлен");
+    } catch (error) {
+      setErrors({ handle: error instanceof Error && error.message === "event_persona_exists" ? "Event-аккаунт уже есть" : "Не удалось сохранить event-аккаунт" });
+    }
   };
 
-  const removePersona = (personaId: number) => {
-    setEventPersonas((previous) => previous.filter((persona) => persona.id !== personaId));
+  const removePersona = async (personaId: number) => {
+    const response = await apiRequest<{ eventPersonas: EventPersona[] }>(`/api/event-personas/${personaId}`, {
+      method: "DELETE"
+    });
+    setEventPersonas(response.eventPersonas);
     showToast("Event-аккаунт удален");
+  };
+
+  const togglePersona = async (persona: EventPersona) => {
+    const response = await apiRequest<{ eventPersonas: EventPersona[] }>(`/api/event-personas/${persona.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: !persona.enabled })
+    });
+    setEventPersonas(response.eventPersonas);
+    showToast(!persona.enabled ? "Event-аккаунт включен" : "Event-аккаунт выключен");
   };
 
   const generateEventDialogue = async (event: FormEvent<HTMLFormElement>) => {
@@ -802,12 +821,13 @@ function App() {
       return;
     }
 
-    if (eventPersonas.length < 2) {
+    const activePersonas = eventPersonas.filter((persona) => persona.enabled !== false);
+    if (activePersonas.length < 2) {
       setGatewayStatus({ state: "error", message: "Для диалога нужны минимум два event-аккаунта" });
       return;
     }
 
-    const personas = eventPersonas.slice(0, 8);
+    const personas = activePersonas.slice(0, 8);
     setErrors({});
     setEventDialogue([]);
     setGatewayStatus({ state: "loading", message: "Генерирую диалог через серверный xedoc.ru gateway" });
@@ -1036,6 +1056,7 @@ function App() {
             setPersonaForm={setPersonaForm}
             addPersona={addPersona}
             removePersona={removePersona}
+            togglePersona={togglePersona}
             dialogueForm={dialogueForm}
             setDialogueForm={setDialogueForm}
             generateEventDialogue={generateEventDialogue}
@@ -1548,6 +1569,7 @@ function CommentsView({
   setPersonaForm,
   addPersona,
   removePersona,
+  togglePersona,
   dialogueForm,
   setDialogueForm,
   generateEventDialogue,
@@ -1598,6 +1620,7 @@ function CommentsView({
   setPersonaForm: (value: EventPersonaFormState) => void;
   addPersona: (event: FormEvent<HTMLFormElement>) => void;
   removePersona: (id: number) => void;
+  togglePersona: (persona: EventPersona) => void;
   dialogueForm: EventDialogueFormState;
   setDialogueForm: (value: EventDialogueFormState) => void;
   generateEventDialogue: (event: FormEvent<HTMLFormElement>) => void;
@@ -1942,12 +1965,18 @@ function CommentsView({
               <div className="persona-card" key={persona.id}>
                 <div>
                   <strong>{persona.name}</strong>
-                  <small>{persona.handle} · {providerLabels[persona.kind]}</small>
+                  <small>{persona.handle} · {providerLabels[persona.kind]} · {persona.enabled === false ? "off" : "on"}</small>
                   <p>{persona.role}</p>
+                  {persona.topics && <p className="persona-topics">{persona.topics}</p>}
                 </div>
-                <button type="button" className="mini-button" title="Удалить" onClick={() => removePersona(persona.id)}>
+                <div className="message-actions">
+                  <button type="button" className="mini-button" title={persona.enabled === false ? "Включить" : "Выключить"} onClick={() => togglePersona(persona)}>
+                    {persona.enabled === false ? <Check size={15} /> : <X size={15} />}
+                  </button>
+                  <button type="button" className="mini-button" title="Удалить" onClick={() => removePersona(persona.id)}>
                   <Trash2 size={15} />
                 </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1972,9 +2001,24 @@ function CommentsView({
                 ))}
               </select>
             </Field>
+            <Field label="Темы" error={errors.topics}>
+              <input
+                value={personaForm.topics}
+                onChange={(event) => setPersonaForm({ ...personaForm, topics: event.target.value })}
+                placeholder="AI SaaS, objections, launch metrics"
+              />
+            </Field>
             <Field label="Роль" error={errors.role}>
               <textarea value={personaForm.role} onChange={(event) => setPersonaForm({ ...personaForm, role: event.target.value })} />
             </Field>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={personaForm.enabled}
+                onChange={(event) => setPersonaForm({ ...personaForm, enabled: event.target.checked })}
+              />
+              <span>Включить в генерацию диалога</span>
+            </label>
             <button type="submit" className="button secondary">
               <Plus size={17} />
               Добавить event-аккаунт

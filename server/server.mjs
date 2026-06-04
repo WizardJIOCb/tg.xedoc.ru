@@ -54,6 +54,15 @@ const commentGenerateSchema = z.object({
   count: z.coerce.number().int().min(1).max(5).default(3)
 });
 
+const eventPersonaSchema = z.object({
+  name: z.string().trim().min(2).max(48),
+  handle: z.string().trim().min(2).max(40).refine((value) => /^@[a-zA-Z0-9_]{3,32}$/.test(value), "account_label_required"),
+  role: z.string().trim().min(8).max(240),
+  topics: z.string().trim().max(300).optional().default(""),
+  kind: z.enum(["codex", "grok", "gemini-cli", "gemini"]),
+  enabled: z.boolean().optional().default(true)
+});
+
 const eventDialogueSchema = z.object({
   channel: z.string().trim().min(3).max(96),
   postUrl: z.string().trim().max(240).optional().default(""),
@@ -68,7 +77,9 @@ const eventDialogueSchema = z.object({
     name: z.string().trim().min(2).max(48),
     handle: z.string().trim().min(2).max(40),
     role: z.string().trim().min(8).max(240),
-    kind: z.enum(["codex", "grok", "gemini-cli", "gemini"])
+    topics: z.string().trim().max(300).optional().default(""),
+    kind: z.enum(["codex", "grok", "gemini-cli", "gemini"]),
+    enabled: z.boolean().optional().default(true)
   })).min(2).max(8)
 });
 
@@ -99,6 +110,36 @@ const seedRules = [
     avoidSalesPitch: true,
     signature: "TG Hunter",
     stopWords: ["buy now", "guarantee", "spam"],
+    enabled: true
+  }
+];
+
+const seedEventPersonas = [
+  {
+    id: 1,
+    name: "Event Host",
+    handle: "@event_host",
+    role: "Moderator persona: frames the discussion, asks calm useful questions, keeps the thread transparent.",
+    topics: "event intro, framing, useful questions",
+    kind: "codex",
+    enabled: true
+  },
+  {
+    id: 2,
+    name: "Product Guest",
+    handle: "@product_guest",
+    role: "Product participant persona: shares practical product-launch experience and asks follow-up questions.",
+    topics: "product launch, customer feedback, metrics",
+    kind: "gemini",
+    enabled: true
+  },
+  {
+    id: 3,
+    name: "Skeptical Founder",
+    handle: "@founder_view",
+    role: "Founder persona: politely challenges assumptions, asks for examples, avoids promotional tone.",
+    topics: "risks, objections, examples",
+    kind: "grok",
     enabled: true
   }
 ];
@@ -136,6 +177,15 @@ async function handleApi(request, response, url) {
   }
   if (request.method === "GET" && url.pathname === "/api/state") return sendJson(response, 200, statePayload(auth.user));
   if (request.method === "POST" && url.pathname === "/api/channels") return createChannel(request, response, auth.user);
+  if (url.pathname === "/api/event-personas") {
+    if (request.method === "GET") return sendJson(response, 200, { eventPersonas: store.eventPersonas });
+    if (request.method === "POST") return createEventPersona(request, response, auth.user);
+  }
+  const eventPersonaMatch = url.pathname.match(/^\/api\/event-personas\/(\d+)$/);
+  if (eventPersonaMatch) {
+    if (request.method === "PATCH") return updateEventPersona(request, response, Number(eventPersonaMatch[1]));
+    if (request.method === "DELETE") return deleteEventPersona(response, Number(eventPersonaMatch[1]));
+  }
   if (request.method === "POST" && url.pathname === "/api/comments/generate") return generateComments(request, response, auth.user);
   if (request.method === "POST" && url.pathname === "/api/event-dialogues/generate") return generateEventDialogue(request, response, auth.user);
   if (request.method === "POST" && url.pathname === "/api/telegram/send-comment") return sendTelegramComment(request, response, auth.user);
@@ -192,6 +242,46 @@ async function createChannel(request, response, user) {
   return sendJson(response, 201, { channel: row, channels: store.channels });
 }
 
+async function createEventPersona(request, response, user) {
+  const parsed = eventPersonaSchema.safeParse(await readJson(request));
+  if (!parsed.success) return sendJson(response, 400, { error: "invalid_event_persona", details: parsed.error.flatten() });
+  const handle = parsed.data.handle.trim();
+  const existing = store.eventPersonas.find((item) => item.handle.toLowerCase() === handle.toLowerCase());
+  if (existing) return sendJson(response, 409, { error: "event_persona_exists", eventPersona: existing });
+  const eventPersona = {
+    id: nextId(store.eventPersonas),
+    ...parsed.data,
+    handle,
+    createdBy: user.id,
+    createdAt: new Date().toISOString()
+  };
+  store.eventPersonas.push(eventPersona);
+  saveStore(store);
+  return sendJson(response, 201, { eventPersona, eventPersonas: store.eventPersonas });
+}
+
+async function updateEventPersona(request, response, personaId) {
+  const persona = store.eventPersonas.find((item) => item.id === personaId);
+  if (!persona) return sendJson(response, 404, { error: "event_persona_not_found" });
+  const parsed = eventPersonaSchema.partial().safeParse(await readJson(request));
+  if (!parsed.success) return sendJson(response, 400, { error: "invalid_event_persona", details: parsed.error.flatten() });
+  if (parsed.data.handle) {
+    const duplicate = store.eventPersonas.find((item) => item.id !== personaId && item.handle.toLowerCase() === parsed.data.handle.toLowerCase());
+    if (duplicate) return sendJson(response, 409, { error: "event_persona_exists", eventPersona: duplicate });
+  }
+  Object.assign(persona, parsed.data, { updatedAt: new Date().toISOString() });
+  saveStore(store);
+  return sendJson(response, 200, { eventPersona: persona, eventPersonas: store.eventPersonas });
+}
+
+function deleteEventPersona(response, personaId) {
+  const before = store.eventPersonas.length;
+  store.eventPersonas = store.eventPersonas.filter((item) => item.id !== personaId);
+  if (store.eventPersonas.length === before) return sendJson(response, 404, { error: "event_persona_not_found" });
+  saveStore(store);
+  return sendJson(response, 200, { ok: true, eventPersonas: store.eventPersonas });
+}
+
 async function generateComments(request, response, user) {
   const parsed = commentGenerateSchema.safeParse(await readJson(request));
   if (!parsed.success) return sendJson(response, 400, { error: "invalid_comment_request", details: parsed.error.flatten() });
@@ -213,9 +303,11 @@ async function generateComments(request, response, user) {
 async function generateEventDialogue(request, response, user) {
   const parsed = eventDialogueSchema.safeParse(await readJson(request));
   if (!parsed.success) return sendJson(response, 400, { error: "invalid_dialogue", details: parsed.error.flatten() });
+  const activePersonas = parsed.data.personas.filter((persona) => persona.enabled !== false);
+  if (activePersonas.length < 2) return sendJson(response, 400, { error: "not_enough_enabled_personas" });
   const turns = [];
   for (let index = 1; index <= parsed.data.turns; index += 1) {
-    const persona = parsed.data.personas[(index - 1) % parsed.data.personas.length];
+    const persona = activePersonas[(index - 1) % activePersonas.length];
     const reply = await aiDialogueTurn(parsed.data, persona, turns, index).catch(() => localDialogueTurn(parsed.data, persona, turns, index));
     turns.push({ id: Date.now() + index, speaker: persona.name, account: persona.handle, reply });
   }
@@ -307,6 +399,7 @@ async function aiDialogueTurn(input, persona, turns, index) {
     `Current turn: ${index}`,
     `Speaker: ${persona.name} (${persona.handle})`,
     `Role: ${persona.role}`,
+    persona.topics ? `Focus topics for this persona: ${persona.topics}` : "",
     "Previous dialogue:",
     previous,
     "Return only the comment text in Russian, 1-3 sentences, under 450 characters."
@@ -383,6 +476,7 @@ function statePayload(user) {
     user: publicUser(user),
     channels: store.channels,
     commentRules: store.commentRules,
+    eventPersonas: store.eventPersonas,
     comments: store.comments.filter((item) => user.role === "admin" || item.userId === user.id).slice(0, 50),
     dialogues: store.dialogues.filter((item) => user.role === "admin" || item.userId === user.id).slice(0, 20),
     users: user.role === "admin" ? store.users.map(publicUser) : [],
@@ -433,7 +527,7 @@ function bootstrapAdmin(nextStore) {
 function loadStore() {
   mkdirSync(dirname(config.dataPath), { recursive: true });
   if (!existsSync(config.dataPath)) {
-    return { users: [], sessions: [], channels: seedChannels, commentRules: seedRules, comments: [], dialogues: [] };
+    return { users: [], sessions: [], channels: seedChannels, commentRules: seedRules, eventPersonas: seedEventPersonas, comments: [], dialogues: [] };
   }
   const parsed = JSON.parse(readFileSync(config.dataPath, "utf8"));
   return {
@@ -441,6 +535,7 @@ function loadStore() {
     sessions: parsed.sessions ?? [],
     channels: parsed.channels ?? seedChannels,
     commentRules: parsed.commentRules ?? seedRules,
+    eventPersonas: normalizeEventPersonas(parsed.eventPersonas ?? seedEventPersonas),
     comments: parsed.comments ?? [],
     dialogues: parsed.dialogues ?? []
   };
@@ -498,6 +593,19 @@ function normalizeChannel(value) {
 
 function nextId(rows) {
   return rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1;
+}
+
+function normalizeEventPersonas(rows) {
+  return rows.map((persona, index) => ({
+    id: Number(persona.id) || index + 1,
+    name: String(persona.name ?? `Event Account ${index + 1}`).slice(0, 48),
+    handle: /^@[a-zA-Z0-9_]{3,32}$/.test(String(persona.handle ?? "")) ? persona.handle : `@event_account_${index + 1}`,
+    role: String(persona.role ?? "Event participant persona for transparent manual-review comments.").slice(0, 240),
+    topics: String(persona.topics ?? "").slice(0, 300),
+    kind: ["codex", "grok", "gemini-cli", "gemini"].includes(persona.kind) ? persona.kind : "codex",
+    enabled: persona.enabled !== false,
+    createdAt: persona.createdAt
+  }));
 }
 
 function publicUser(user) {

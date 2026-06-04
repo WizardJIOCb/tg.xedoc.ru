@@ -90,7 +90,9 @@ export type EventPersona = {
   name: string;
   handle: string;
   role: string;
+  topics: string;
   kind: ModelProvider;
+  enabled: boolean;
 };
 
 export type EventDialogueTurn = {
@@ -294,21 +296,27 @@ export const seedEventPersonas: EventPersona[] = [
     name: "Event Host",
     handle: "@event_host",
     role: "Организатор события: задает тему, держит тон спокойным и полезным.",
-    kind: "codex"
+    topics: "event intro, framing, useful questions",
+    kind: "codex",
+    enabled: true
   },
   {
     id: 2,
     name: "Product Guest",
     handle: "@product_guest",
     role: "Участник события: добавляет практический опыт, задает уточняющие вопросы.",
-    kind: "gemini"
+    topics: "product launch, customer feedback, metrics",
+    kind: "gemini",
+    enabled: true
   },
   {
     id: 3,
     name: "Skeptical Founder",
     handle: "@founder_view",
     role: "Основатель: мягко спорит, просит примеры и не пишет рекламно.",
-    kind: "grok"
+    topics: "risks, objections, examples",
+    kind: "grok",
+    enabled: true
   }
 ];
 

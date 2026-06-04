@@ -80,7 +80,9 @@ export const eventPersonaSchema = z.object({
     .max(40, "Метка слишком длинная")
     .refine((value) => /^@[a-zA-Z0-9_]{3,32}$/.test(value), "Формат @account_label"),
   role: z.string().trim().min(12, "Опишите роль подробнее").max(220, "Роль слишком длинная"),
-  kind: modelProviderSchema
+  topics: z.string().trim().max(300, "Topics are too long").optional().default(""),
+  kind: modelProviderSchema,
+  enabled: z.boolean().optional().default(true)
 });
 
 export const eventDialogueSchema = z.object({

@@ -1035,7 +1035,7 @@ select:focus {
 
 .persona-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   padding: 10px;
@@ -1059,6 +1059,11 @@ select:focus {
   color: #344b5a;
   font-size: 13px;
   line-height: 1.4;
+}
+
+.persona-card .persona-topics {
+  color: #0f766e;
+  font-weight: 750;
 }
 
 .campaign-row {
