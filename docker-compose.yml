@@ -1,0 +1,7 @@
+services:
+  tg-hunter:
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:3010:80"
+    restart: unless-stopped
